@@ -1,6 +1,6 @@
 # BrakeFRI benchmark results
 
-All **330 configurations and 1,110 trials** completed successfully on 2026-09-06, with no failures or omissions. This directory keeps the six main measurement CSVs and this summary. Logs, per-case metadata, duplicate dependency snapshots, and preliminary M5 validation files were removed during cleanup; the original artifacts remain in Git history at `e767ef1`.
+All **330 configurations and 1,110 trials** completed successfully on 2026-09-06, with no failures or omissions. This directory keeps the six main measurement CSVs, the generated figures, and this summary. Logs, per-case metadata, duplicate dependency snapshots, and preliminary M5 validation files were removed during cleanup; the original artifacts remain in Git history at `e767ef1`.
 
 ## Data files
 
@@ -42,6 +42,28 @@ Single measured trials at `log_n=30`, threads=16:
 | sha256 | f128-base | 45.860 | 62.280 | 51.100 | 9,206,087 |
 | blake3 | goldilocks-quadratic | 20.415 | 16.298 | 31.589 | 5,182,920 |
 | blake3 | f128-base | 46.755 | 64.829 | 56.555 | 9,203,399 |
+
+## Figures
+
+Each image contains four panels comparing Keccak-256, SHA-256, and BLAKE3 for one field profile and one thread count. Points are per-configuration medians. The x-axis shows `log₂ n` directly (20–30); it is already the logarithm of the problem size. The requested constraint-count label uses `n`, which denotes the coefficient count in this standalone PCS.
+
+Commit/prover times use seconds, verifier time uses milliseconds, and proof size uses KiB (1 KiB = 1,024 bytes). Time y-axes use base-10 logarithms; proof-size y-axes use base-2 logarithms. Y-axis limits are shared across thread counts within each field profile and metric. Configurations at sizes 28–30 have a single trial.
+
+| Threads | Goldilocks quadratic | F128 base |
+|---:|---|---|
+| 1 | [Figure](figures/goldilocks_quadratic/threads_1.png) | [Figure](figures/f128_base/threads_1.png) |
+| 2 | [Figure](figures/goldilocks_quadratic/threads_2.png) | [Figure](figures/f128_base/threads_2.png) |
+| 4 | [Figure](figures/goldilocks_quadratic/threads_4.png) | [Figure](figures/f128_base/threads_4.png) |
+| 8 | [Figure](figures/goldilocks_quadratic/threads_8.png) | [Figure](figures/f128_base/threads_8.png) |
+| 16 | [Figure](figures/goldilocks_quadratic/threads_16.png) | [Figure](figures/f128_base/threads_16.png) |
+
+Regenerate the 10 PNGs from the repository root with Python and Matplotlib 3.10 or newer:
+
+```sh
+python3 scripts/plot_results.py
+```
+
+The script validates the full campaign and leaves raw CSVs unchanged. Use `--dpi` to change image resolution or `--out` to select a different figure directory.
 
 ## Reproduce
 
