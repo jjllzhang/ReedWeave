@@ -1,5 +1,9 @@
 # Implementation status
 
+All six milestones are complete, independently reviewed, and committed separately. The full measurement campaign produced 1,110 verified trials across all 330 requested cases, with no omissions. See [the measured series](../results/README.md) for results and reproduction instructions.
+
+Each implementation and independent review ran in a fresh Pi session using `openai-codex/gpt-6-astra` with `medium` reasoning. Session files and review reports are stored locally under `.git/`. The stage notes below preserve the findings and checks recorded at each review; references to future work in earlier notes describe that stage's historical state.
+
 ## M1: complete
 
 The Cargo workspace contains four implemented crates. All Plonky3 dependencies resolve from public Git revision `9d496524560f3c699473906c6f50fca7cf343730` (compatible upstream 0.7.0 sources); `Cargo.lock` retains the resolved dependency graph. F128 arithmetic delegates to crates.io `winter-math` 0.13. No absolute checkout dependencies are used.
@@ -54,7 +58,7 @@ Reviewed every M2 Rust source and test against HEAD, the full plan, the paper, a
 
 Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (35 tests, including all six new M2 tests discovered by Cargo), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Confirmed portable locked dependencies and ignored, untracked planning documents. M2 is ready to commit with no concrete blockers. The review report is in `.git/stages/M2-review-report.md`; later milestone work remains below.
 
-## M3: complete (independently reviewed; awaiting parent commit)
+## M3: complete (independently reviewed and committed)
 
 Audited the M2 typed protocol and M1 MMCS adapter against plan Sections 8 and 9 and the paper's Section 3 query experiment. The existing protocol already assembled the required multiproofs. M3 hardens that path and adds focused acceptance evidence.
 
@@ -80,7 +84,7 @@ Reviewed all M3 changes against HEAD, including the newly added Cargo integratio
 
 Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (37 tests, none ignored), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Cargo.lock and portable dependency sources are unchanged; planning documents and session files remain untracked. M3 is ready to commit with no concrete blockers. The report is `.git/stages/M3-review-report.md`.
 
-## M4: complete (independently reviewed; awaiting parent commit)
+## M4: complete (independently reviewed and committed)
 
 `brakefri_core::codec` now exposes `encode_commitment`, `decode_commitment`, `encode_eval_proof::<P>`, and `decode_eval_proof::<P>`, with structured encoding/decoding errors. Commitment bytes are exactly the raw 32-byte root. Local Postcard/Serde wire structures borrow the existing typed proof's field rows and frontier vectors; only small round/opening descriptor vectors are projected. The evaluation encoding contains exactly the specified prover messages, with fixed canonical coordinate arrays, challenge tuples, digest arrays, and real vector framing. It contains no statement, context, header, indices, challenges, or initial root. Exact ordering and accounting are documented in [wire-format.md](wire-format.md).
 
@@ -104,7 +108,7 @@ Reviewed every M4 change against HEAD, the full plan and assignment, the paper's
 
 Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (42 tests, none ignored, including all five M4 tests), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Confirmed public locked dependencies and ignored, untracked planning documents. No concrete defects were found; no Rust fixes or redundant tests were added. M4 is ready to commit with no concrete blockers. The report is `.git/stages/M4-review-report.md`. No benchmark timings or later-stage work were produced.
 
-## M5: complete (independently reviewed; awaiting parent commit)
+## M5: complete (independently reviewed and committed)
 
 The workspace now includes `brakefri-bench`, a Rust `run` / `preflight` / `sweep` CLI. The checked TOML configuration preserves m=1024, B=2, Q=244 and repetition defaults 5 for 20–24, 3 for 25–27, and 1 for 28–30. API sizes 11–19 use the small-size repetition policy. CLI overrides, inclusive ranges, field/hash/thread lists, output paths, seeded fixtures, and optional per-case limits are implemented and documented in README/help. Existing dependency versions remain unchanged; Cargo.lock adds the CLI/config/test dependencies and retains portable public Plonky3 sources.
 
@@ -136,7 +140,30 @@ Reviewed every M5 Rust source, manifest, configuration and test against HEAD, th
 
 Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (47 tests, none ignored, including the CLI integration test), `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --release -p brakefri-bench --locked`, and `git diff --check`. Confirmed `p3-maybe-rayon/parallel` through `cargo tree --locked -e features -i p3-maybe-rayon`. Independently completed one release F128/SHA-256 trial at log_n=20 with threads=3 and one repetition, plus full preflight for both profiles, all suites, sizes 20–30 and threads 1,8. Review-only output remains under `.git/m5-review-validation/` and `.git/stages/M5-review-preflight.txt`. Checked all 17 retained M5 CSV rows and their dependency lockfiles. Planning documents remain ignored and untracked. M5 is ready to commit with no concrete blockers; the report is `.git/stages/M5-review-report.md`. No M6 campaign was launched.
 
+## M6: complete (independently reviewed and committed)
+
+Executed the full configured matrix using the single existing Rust sweep engine and fresh serially scheduled children: both profiles, all three hashes, every size 20–30 inclusive, threads 1/2/4/8/16, and repetitions 5/3/1 for size bands 20–24/25–27/28–30. **All 330 cases and 1,110 requested trials succeeded**, with zero failed, resource-limited, omitted, incomplete, or rerun cases. Each of the six `results/<hash>/<field>.csv` files contains 185 verified rows across 55 configurations. M5 validation remains separate.
+
+The one parallel-enabled release binary was built with `cargo build --release -p brakefri-bench --locked` from committed revision `fd1b8c5b5e97a3652e02cc7e393606ff95dea33f`. Compiler: Rust 1.95.0, LLVM 22.1.2, x86_64-unknown-linux-gnu, opt-level 3, no extra Rust flags. Neither implementation, dependencies, config, nor binary changed during the series. Architecture and timing boundaries remain those reviewed in M1–M5: each row uses actual encoded commitment/proof buffers and successful expected-root verification. No protocol changes or new performance tests were needed.
+
+All 330 preflight admissions passed on an AMD EPYC 9754 (128 cores / 256 logical CPUs), about 503 GiB RAM and initially 491 GiB available, with no swap or finite readable cgroup memory limit. The largest engine allocation estimate was about 100.84 GiB, not a measured RSS figure. No optional memory cap or timeout was introduced. The tmux sweep ran 2026-09-06 10:26:08–13:49:08 UTC and exited zero. Default seed 20260906, the full unchanged TOML configuration, successive fixture points, no warmups, and fresh timed DFT caches were preserved. No exclusive CPU reservation was applied; checks overlapped approximately the first second and are disclosed in the series report.
+
+### M6 checks and evidence
+
+Passed `cargo fmt --all -- --check`, `cargo test -p brakefri-bench --locked` (five existing tests), and `cargo clippy --workspace --all-targets --locked -- -D warnings`. No code changes justified rerunning the full correctness suite. Independently audited all six CSV headers, parameter geometry and grouping, exact repetition counts, finite strictly positive times, and integer actual proof sizes. Every numeric row matched its ordered verified log entry; each case had exactly one START/DONE pair. Proof-size sequences matched across thread settings. All 330 immutable metadata/lockfile pairs agreed on compiler/options and dependencies; binary/config checksums remained unchanged.
+
+[The measured series report](../results/README.md) records commands, source/build identities, hardware, fixtures, timing policy, all coverage counts, actual endpoint examples, and the absence of failures or omissions. `results/run.log` and `results/metadata/` retain per-case evidence, full preflight, environment snapshots, check output, and the independent final audit outside numeric CSVs. Session/monitoring logs remain under `.git/m6/`. M6 changes are uncommitted for parent review.
+
+### Independent M6 review
+
+Compared all M6 changes against committed M5 revision `fd1b8c5b5e97a3652e02cc7e393606ff95dea33f`. Only measurements and documentation changed. Inspected the actual benchmark fixture, dispatch, timers, child scheduling, CSV/metadata writer, configuration, CLI integration test, and encoded-verification helper. Actual encoded buffers pass expected-root matching and typed verification before their checked combined length reaches a row. No concrete defects or required code fixes were found.
+
+An independent review script checked all six CSVs against all 330 ordered configurations and 1,110 requested repetitions; every row has the exact header/geometry and finite positive times. All ordered START/VERIFIED/DONE events, repetition numbers, and proof sizes match, with no overlapping cases or omissions. Each row's phase times fit within its corresponding log interval. All 330 metadata/lock pairs match the one release build and current lockfile; full preflight, configuration, binary checksums, and retained CSV/log checksums agree. Existing disclosure of the brief initial check overlap is accurate; it does not leave a missing trial or require replacement measurements.
+
+Independently passed `cargo fmt --all -- --check`, `cargo test -p brakefri-bench --locked` (four unit tests and the Cargo-discovered CLI integration test), `cargo clippy --workspace --all-targets --locked -- -D warnings`, `git diff --check`, `python3 .git/m6-review/audit.py`, and `sha256sum -c results/metadata/m6-sha256sums.txt`. No Rust changes justified another full correctness suite or benchmark sweep. Planning documents remain ignored and untracked. M6 is ready to commit with no concrete blockers; the review report is `.git/stages/M6-review-report.md`.
+
 ## Remaining milestones
-- M6: the requested measurement campaign across sizes 20–30, profiles, suites, and thread settings. Only the M5 validation measurements above have been run; campaign endpoints remain unmeasured.
+
+No implementation or measurement milestones remain. All stage reviews passed, and each stage has its own Git commit.
 
 The supplied planning documents remain ignored and untracked. Each milestone is implemented in a fresh Pi session, independently reviewed, checked, and committed by the parent orchestrator.

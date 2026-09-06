@@ -1,0 +1,26 @@
+results/keccak256/goldilocks_quadratic.csv: 185 verified numeric rows, 55 cases
+results/keccak256/f128_base.csv: 185 verified numeric rows, 55 cases
+results/sha256/goldilocks_quadratic.csv: 185 verified numeric rows, 55 cases
+results/sha256/f128_base.csv: 185 verified numeric rows, 55 cases
+results/blake3/goldilocks_quadratic.csv: 185 verified numeric rows, 55 cases
+results/blake3/f128_base.csv: 185 verified numeric rows, 55 cases
+Total: 330/330 cases and 1110/1110 requested trials; no failures or omissions.
+Exact nine-column headers, fixed geometry, complete repetition counts, finite positive times and integer actual proof sizes: PASS.
+START/DONE/VERIFIED log events and ordered repetition proof sizes match every numeric row: PASS.
+Proof-size sequences match across all five thread settings for each field/hash/size: PASS.
+330 case metadata records and identical compiled Cargo.lock copies; one compiler/options identity: PASS.
+Release binary SHA-256 and config unchanged since preflight: PASS.
+
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-unknown-linux-gnu
+release: 1.95.0
+LLVM version: 22.1.2
+
+target=x86_64-unknown-linux-gnu
+profile=release
+opt_level=3
+rustflags=None
+encoded_rustflags=Some("")

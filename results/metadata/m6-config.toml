@@ -1,0 +1,22 @@
+[protocol]
+m = 1024
+blowup = 2
+num_queries = 244
+
+# CLI benchmark options override these settings. Fixed protocol values are checked.
+[benchmark]
+fields = ["goldilocks-quadratic", "f128-base"]
+hashes = ["keccak256", "sha256", "blake3"]
+log_n_min = 20
+log_n_max = 30
+threads = [1, 2, 4, 8, 16]
+repetitions_small = 5
+repetitions_medium = 3
+repetitions_large = 1
+output_dir = "results"
+seed = 20260906
+# No warmups. Each trial uses a fresh DFT cache; construction is timed.
+# Optional per-case admission cap (MiB); also limited to 80% of available memory.
+# max_memory_mib = 65536
+# Optional child wall time limit, including setup and every repetition.
+# time_limit_seconds = 3600

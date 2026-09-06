@@ -1,6 +1,6 @@
 # BrakeFRI
 
-Standalone Rust coefficient-input BrakeFRI PCS with both field profiles, three hash suites, shared Merkle multiproofs, bounded codecs, and a measured Rust CLI. M1–M5 are implemented; the M6 measurement campaign remains pending. See [implementation status](docs/implementation-status.md).
+Standalone Rust coefficient-input BrakeFRI PCS with both field profiles, three hash suites, shared Merkle multiproofs, bounded codecs, and a measured Rust CLI. M1–M6 are complete, with all 1,110 requested M6 trials successfully verified across 330 configurations. See [measured series](results/README.md) and [implementation status](docs/implementation-status.md).
 
 The production API accepts exactly `2^log_n` coefficients in ascending monomial order, for `log_n=11..30`. Parameters are fixed at `m=1024`, blowup `2`, and `244` replacement-sampled queries. The field/query bound is the paper's 100-bit **interactive** bound; it excludes hash collision and Fiat–Shamir compilation losses.
 
@@ -44,7 +44,7 @@ target/release/brakefri-bench preflight \
   --fields goldilocks-quadratic,f128-base \
   --hashes keccak256,sha256,blake3 --log-n 20..30 --threads 1,8
 
-# M6 campaign command. Scheduling is sequential; large cases need sufficient resources.
+# Completed M6 campaign command. Use a fresh --out directory for a new series.
 target/release/brakefri-bench sweep \
   --fields goldilocks-quadratic,f128-base \
   --hashes keccak256,sha256,blake3 --log-n 20..30 --threads 1,2,4,8,16 \
@@ -75,7 +75,7 @@ Raw trials append to `<out>/<hash>/goldilocks_quadratic.csv` or `<out>/<hash>/f1
 log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size
 ```
 
-Existing headers must match exactly; incomplete final rows are rejected. Repetitions remain separate rows. Use a separate output directory for independent or concurrent series; simultaneous writers to one series are unsupported. M5's small release validation files are in `results/m5-validation/`; these are implementation checks, not the M6 campaign.
+Existing headers must match exactly; incomplete final rows are rejected. Repetitions remain separate rows. Use a separate output directory for independent or concurrent series; simultaneous writers to one series are unsupported. M5's small release validation files are in `results/m5-validation/`. The completed M6 campaign has 185 verified rows in each of the six field/hash CSVs directly under `results/<hash>/`, covering all configured sizes, threads, and repetitions with no failures or omissions. Build, hardware, commands, and final audit are documented in [results/README.md](results/README.md).
 
 Each child case writes immutable compiler/target/build-flag metadata, a copy of its compiled dependency lockfile, seed, repetition, cache/warmup policy, and configured limits under `<out>/metadata/`. `<out>/run.log` records case starts, verified trials, resource estimates, and failures. Metadata never adds columns to the numeric CSV.
 
