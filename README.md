@@ -75,7 +75,7 @@ Raw trials append to `<out>/<hash>/goldilocks_quadratic.csv` or `<out>/<hash>/f1
 log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size
 ```
 
-Existing headers must match exactly; incomplete final rows are rejected. Repetitions remain separate rows. Use a separate output directory for independent or concurrent series; simultaneous writers to one series are unsupported. M5's small release validation files are in `results/m5-validation/`. The completed M6 campaign has 185 verified rows in each of the six field/hash CSVs directly under `results/<hash>/`, covering all configured sizes, threads, and repetitions with no failures or omissions. Build, hardware, commands, and final audit are documented in [results/README.md](results/README.md).
+Existing headers must match exactly; incomplete final rows are rejected. Repetitions remain separate rows. Use a separate output directory for independent or concurrent series; simultaneous writers to one series are unsupported. The completed M6 campaign has 185 verified rows in each of the six field/hash CSVs directly under `results/<hash>/`, covering all configured sizes, threads, and repetitions with no failures or omissions. The retained results directory contains these six CSVs and [a concise campaign summary](results/README.md). Preliminary M5 measurements, logs, and metadata snapshots were removed during cleanup and remain available in Git history at `e767ef1`.
 
 Each child case writes immutable compiler/target/build-flag metadata, a copy of its compiled dependency lockfile, seed, repetition, cache/warmup policy, and configured limits under `<out>/metadata/`. `<out>/run.log` records case starts, verified trials, resource estimates, and failures. Metadata never adds columns to the numeric CSV.
 

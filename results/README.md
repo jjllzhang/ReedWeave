@@ -1,77 +1,57 @@
-# M6 measured series
+# BrakeFRI benchmark results
 
-Completed **330 of 330 cases and 1,110 of 1,110 requested verified trials** on 2026-09-06. The single Rust sweep exited successfully. There were **no failed, resource-limited, skipped, incomplete, or rerun cases**. All six raw CSVs contain 185 trials covering 55 configurations each. Earlier small implementation checks remain separate in `m5-validation/`.
+All **330 configurations and 1,110 trials** completed successfully on 2026-09-06, with no failures or omissions. This directory keeps the six main measurement CSVs and this summary. Logs, per-case metadata, duplicate dependency snapshots, and preliminary M5 validation files were removed during cleanup; the original artifacts remain in Git history at `e767ef1`.
 
-## Reproduction and build
+## Data files
 
-The measured source revision is `fd1b8c5b5e97a3652e02cc7e393606ff95dea33f` (committed M1–M5). No Rust, dependency, configuration, or release-binary changes occurred during this series. The working tree was clean before preparation. The release binary was built from that revision with:
+Each hash directory (`keccak256/`, `sha256/`, `blake3/`) contains:
 
-```sh
-cargo build --release -p brakefri-bench --locked
+- `goldilocks_quadratic.csv`: Goldilocks base field with quadratic challenges.
+- `f128_base.csv`: F128 base field and challenges.
 
-target/release/brakefri-bench preflight \
-  --fields goldilocks-quadratic,f128-base \
-  --hashes keccak256,sha256,blake3 --log-n 20..30 --threads 1,2,4,8,16 \
-  --config configs/brakefri.toml
-
-target/release/brakefri-bench sweep \
-  --fields goldilocks-quadratic,f128-base \
-  --hashes keccak256,sha256,blake3 --log-n 20..30 --threads 1,2,4,8,16 \
-  --config configs/brakefri.toml --out results/
-```
-
-The sweep ran in tmux, from **10:26:08 to 13:49:08 UTC** (3 hours 23 minutes of process wall time, including untimed setup and teardown). Scheduling followed fields, hashes, increasing sizes, then threads. Each of the 330 cases ran in a fresh child, with no concurrent benchmark cases. No optional time or memory cap was supplied. Resource admission retained the existing 80% available-memory policy.
-
-Compiler: Rust `1.95.0 (59807616e 2026-04-14)`, LLVM 22.1.2, target `x86_64-unknown-linux-gnu`, release optimization level 3, default Cargo release options, no `RUSTFLAGS` or encoded Rust flags. The same parallel-enabled binary served all thread settings. Plonky3 remains at `9d496524560f3c699473906c6f50fca7cf343730` through the unchanged lockfile.
-
-SHA-256 identities:
-
-- Release executable: `bcf1c9d061e32bc0ae070f02325d07d1ab84cab142de176f5c8ab865686abcbb`.
-- `Cargo.lock`: `d5682f3300979c148dea7d3b4b9db130426e6da8bc49e61bee239262ad2ea3b7`.
-- `configs/brakefri.toml`: `23dc46e05ffdbbdba73422354875136fce6d4844a8ebc5acb82dede2b3687932`.
-
-## Configuration and machine
-
-Both profiles (`goldilocks-quadratic`, `f128-base`), all three hashes (`keccak256`, `sha256`, `blake3`), every `log_n=20..30` inclusive, and threads `1,2,4,8,16` were measured. Each configuration has five repetitions for sizes 20–24, three for 25–27, and one for 28–30. Protocol parameters are m=1024, blowup=2, rho=0.5, Q=244.
-
-Fixtures use `SplitMix64-v1`, seed `20260906`, canonical little-endian rejection sampling, and separate coefficient/point streams. Each repetition regenerates the same coefficients; successive repetitions consume successive points after commitment. Field, size, and seed determine the fixtures across hashes and thread settings. There were no warmups or untimed DFT-cache preparations. No invocations were restarted, so no repetition deduplication or point-sequence adjustment was necessary.
-
-The machine reported one AMD EPYC 9754 socket, 128 physical cores / 256 logical CPUs, four NUMA nodes, and about 503 GiB RAM with no swap. Initial available memory was about 491 GiB. All 330 preflight admissions passed; the largest estimated allocation peak, F128 at size 30 with 16 threads, was 108,270,695,192 bytes (about 100.84 GiB). This is the engine's conservative capacity estimate, **not measured peak RSS**. Readable cgroup ancestors reported unlimited memory, with zero OOM events in the recorded snapshots. CPU affinity allowed 0–255; no taskset, NUMA binding, or governor change was applied. Frequency boost was enabled. This was an ordinary host run without exclusive CPU reservation. Formatting, focused tests, and Clippy ran during the first approximately one second of the series and may have affected its earliest timings; those successful rows are retained without replacement.
-
-## Results and verification
-
-Raw files are `<hash>/goldilocks_quadratic.csv` and `<hash>/f128_base.csv`, with exactly:
+Each CSV contains 185 trials across 55 size/thread configurations, with exactly:
 
 ```csv
 log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size
 ```
 
-Times are measured seconds. Every row follows actual coefficient commitment, proof generation, encoding, decoding, expected-commitment matching, and verification. `proof_size` counts the actual 32-byte initial commitment plus the actual evaluation-proof buffer verified in that trial. Public claims and transcript context are excluded. Serialization is included in commit/prove time and decoding in verify time. No estimated or extrapolated values appear in these CSVs.
+Times are measured seconds. `proof_size` is the actual 32-byte initial commitment plus the evaluation-proof bytes verified in that trial. Public claims and transcript context are excluded. Commitment/proving times include encoding; verification time includes decoding. Raw repetitions are preserved.
 
-For illustration, the following are the **single measured trials** at `log_n=30`, threads=16, copied from the raw files. They are not medians or predictions.
+## Campaign settings
 
-| Hash | Profile | Commit (s) | Prove (s) | Verify (s) | Proof bytes |
+- Sizes: every `log_n=20..30`, with `n=2^log_n` coefficients.
+- Threads: 1, 2, 4, 8, 16, shared by all three phases.
+- Repetitions: five for sizes 20–24, three for 25–27, one for 28–30.
+- Protocol: `m=1024`, `k=n/1024`, blowup 2, rate 0.5, 244 queries.
+- Fixtures: SplitMix64-v1, seed `20260906`; identical coefficients across repetitions and successive evaluation points. No warmups or untimed DFT-cache preparation.
+- Machine: AMD EPYC 9754, 128 physical cores / 256 logical CPUs, about 503 GiB RAM, no swap or explicit CPU/NUMA binding.
+- Build: Rust 1.95.0, LLVM 22.1.2, x86_64 Linux, default release optimization, no extra Rust flags.
+- Measured source: `fd1b8c5b5e97a3652e02cc7e393606ff95dea33f`; one unchanged binary, dependency lockfile, and configuration throughout the campaign.
+
+Cases ran sequentially in fresh child processes. Total campaign wall time was 3 hours 23 minutes. The host was not exclusively reserved; checks overlapped roughly the first second of the campaign. Large configurations have one trial each, so small timing differences should be interpreted cautiously. Peak RSS was not measured.
+
+## Largest-instance results
+
+Single measured trials at `log_n=30`, threads=16:
+
+| Hash | Profile | Commit (s) | Prove (s) | Verify (ms) | Proof bytes |
 |---|---|---:|---:|---:|---:|
-| keccak256 | goldilocks-quadratic | 22.830041201 | 19.683745821 | 0.044260417 | 5,200,039 |
-| keccak256 | f128-base | 57.281697624 | 70.531269453 | 0.073976728 | 9,202,471 |
-| sha256 | goldilocks-quadratic | 24.101912499 | 20.333342698 | 0.032091548 | 5,204,359 |
-| sha256 | f128-base | 45.859804860 | 62.279564938 | 0.051100488 | 9,206,087 |
-| blake3 | goldilocks-quadratic | 20.414685009 | 16.297940598 | 0.031589208 | 5,182,920 |
-| blake3 | f128-base | 46.755317106 | 64.828880658 | 0.056554935 | 9,203,399 |
+| keccak256 | goldilocks-quadratic | 22.830 | 19.684 | 44.260 | 5,200,039 |
+| keccak256 | f128-base | 57.282 | 70.531 | 73.977 | 9,202,471 |
+| sha256 | goldilocks-quadratic | 24.102 | 20.333 | 32.092 | 5,204,359 |
+| sha256 | f128-base | 45.860 | 62.280 | 51.100 | 9,206,087 |
+| blake3 | goldilocks-quadratic | 20.415 | 16.298 | 31.589 | 5,182,920 |
+| blake3 | f128-base | 46.755 | 64.829 | 56.555 | 9,203,399 |
 
-After the sweep, an independent CSV/log audit checked all headers, field/hash paths, fixed geometry, all 330 parameter groups, exact repetition counts, finite strictly positive measured times, and integer proof sizes greater than 32. Every row matched its ordered `VERIFIED` log entry and actual byte length. Each case had exactly one `START` and `DONE`; proof-size sequences agreed across thread settings. All 330 case metadata records had the same compiler/options identity and lockfile contents. The config and executable hashes still matched preparation. No missing trials or blockers remain.
+## Reproduce
 
-Evidence outside numeric CSVs:
+From the repository root, build the measured revision with its committed lockfile and configuration. Use a fresh output directory to avoid appending another series to these CSVs:
 
-- [`run.log`](run.log): all resource checks, case starts, verified repetitions, and completions.
-- [`metadata/m6-audit.txt`](metadata/m6-audit.txt): independent final count and consistency checks.
-- [`metadata/m6-config.toml`](metadata/m6-config.toml): unchanged series configuration.
-- [`metadata/m6-environment.txt`](metadata/m6-environment.txt): source revision, compiler, hardware, resources, and identities.
-- [`metadata/m6-preflight.txt`](metadata/m6-preflight.txt): all 330 preflight cases.
-- `metadata/m6-cgroup-start.txt` and `metadata/m6-cgroup-end.txt`: real cgroup resource snapshots.
-- [`metadata/m6-parallel-features.txt`](metadata/m6-parallel-features.txt): enabled upstream parallel feature graph.
-- `metadata/<timestamp>-<pid>.txt` and matching `.lock`: immutable metadata and compiled lockfile per child case.
-- [`metadata/m6-checks.txt`](metadata/m6-checks.txt): build, formatting, relevant tests, and Clippy output.
-- [`metadata/m6-sha256sums.txt`](metadata/m6-sha256sums.txt): raw CSV and run-log identities.
+```sh
+cargo build --release -p brakefri-bench --locked
 
-M6 changed measurements and documentation only. Five existing benchmark tests passed with `cargo test -p brakefri-bench --locked`; formatting and workspace Clippy with warnings denied also passed. The previously reviewed full correctness suite was not rerun, and no redundant performance tests were added. Session and temporary monitoring files remain under `.git/m6/`.
+target/release/brakefri-bench sweep \
+  --fields goldilocks-quadratic,f128-base \
+  --hashes keccak256,sha256,blake3 --log-n 20..30 --threads 1,2,4,8,16 \
+  --config configs/brakefri.toml --out /tmp/brakefri-new-series
+```
