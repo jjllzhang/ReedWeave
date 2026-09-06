@@ -50,7 +50,10 @@ name = "brakefri-core"
 version = "0.1.0"
 dependencies = [
  "brakefri-primitives",
+ "brakefri-runtime",
  "num-bigint",
+ "p3-field",
+ "p3-matrix",
  "thiserror",
 ]
 

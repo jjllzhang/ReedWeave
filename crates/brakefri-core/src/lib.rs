@@ -1,6 +1,10 @@
-//! BrakeFRI public parameters. Coefficient PCS operations follow in M2.
+//! Standalone coefficient-input BrakeFRI with validated public parameters.
+mod pcs;
 pub use brakefri_primitives::profile::Profile;
 use num_bigint::BigUint;
+pub use pcs::{
+    BrakeFri, BrakeProof, Commitment, Opening, PcsError, ProverData, Round, ScalarOpening,
+};
 use thiserror::Error;
 
 pub const M: usize = 1024;
