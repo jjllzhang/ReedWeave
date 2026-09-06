@@ -1,0 +1,16 @@
+[protocol]
+m = 1024
+blowup = 2
+num_queries = 244
+
+# Benchmark commands and configuration parsing are scheduled for M5.
+[benchmark]
+fields = ["goldilocks-quadratic", "f128-base"]
+hashes = ["keccak256", "sha256", "blake3"]
+log_n_min = 20
+log_n_max = 30
+threads = [1, 2, 4, 8, 16]
+repetitions_small = 5
+repetitions_medium = 3
+repetitions_large = 1
+output_dir = "results"

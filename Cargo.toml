@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/brakefri-core", "crates/p3-f128-adapter", "crates/brakefri-primitives", "crates/brakefri-runtime"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[workspace.dependencies]
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-maybe-rayon = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730", features = ["parallel"] }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-keccak = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-sha256 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+num-bigint = "0.5.1"
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+winter-math = "0.13"
+rayon = "1.12"
+p3-f128-adapter = { path = "crates/p3-f128-adapter" }
+brakefri-primitives = { path = "crates/brakefri-primitives" }
+brakefri-runtime = { path = "crates/brakefri-runtime" }

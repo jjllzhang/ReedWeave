@@ -1,0 +1,19 @@
+[package]
+name = "p3-f128-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Winterfell F128 arithmetic adapter for Plonky3"
+
+[dependencies]
+p3-field.workspace = true
+num-bigint.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+winter-math.workspace = true
+
+[dev-dependencies]
+postcard = { version = "1", features = ["alloc"] }
+serde_json = "1"
