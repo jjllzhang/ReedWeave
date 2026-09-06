@@ -1,0 +1,56 @@
+SystemTime { tv_sec: 1788689520, tv_nsec: 800889495 } goldilocks-quadratic keccak256 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=26257184 peak_with_overhead=66437752; available_memory_bytes=Some(526796099584) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 803718110 } START goldilocks-quadratic keccak256 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689520803629478-2018932
+SystemTime { tv_sec: 1788689520, tv_nsec: 805639024 } VERIFIED goldilocks-quadratic keccak256 log_n=11 threads=1 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 821541928 } DONE goldilocks-quadratic keccak256 log_n=11 threads=1
+SystemTime { tv_sec: 1788689520, tv_nsec: 821893336 } goldilocks-quadratic keccak256 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=30451488 peak_with_overhead=71680632; available_memory_bytes=Some(526783455232) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 824722880 } START goldilocks-quadratic keccak256 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689520824555097-2018934
+SystemTime { tv_sec: 1788689520, tv_nsec: 826456200 } VERIFIED goldilocks-quadratic keccak256 log_n=11 threads=3 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 842459416 } DONE goldilocks-quadratic keccak256 log_n=11 threads=3
+SystemTime { tv_sec: 1788689520, tv_nsec: 842783693 } goldilocks-quadratic sha256 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=26257184 peak_with_overhead=66437752; available_memory_bytes=Some(526774992896) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 845901175 } START goldilocks-quadratic sha256 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689520845706971-2018938
+SystemTime { tv_sec: 1788689520, tv_nsec: 847133763 } VERIFIED goldilocks-quadratic sha256 log_n=11 threads=1 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 863504177 } DONE goldilocks-quadratic sha256 log_n=11 threads=1
+SystemTime { tv_sec: 1788689520, tv_nsec: 863820625 } goldilocks-quadratic sha256 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=30451488 peak_with_overhead=71680632; available_memory_bytes=Some(526766682112) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 866812813 } START goldilocks-quadratic sha256 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689520866693790-2018940
+SystemTime { tv_sec: 1788689520, tv_nsec: 867933859 } VERIFIED goldilocks-quadratic sha256 log_n=11 threads=3 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 884481477 } DONE goldilocks-quadratic sha256 log_n=11 threads=3
+SystemTime { tv_sec: 1788689520, tv_nsec: 884840865 } goldilocks-quadratic blake3 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=26257184 peak_with_overhead=66437752; available_memory_bytes=Some(526758424576) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 888060499 } START goldilocks-quadratic blake3 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689520887829254-2018944
+SystemTime { tv_sec: 1788689520, tv_nsec: 889708597 } VERIFIED goldilocks-quadratic blake3 log_n=11 threads=1 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 905643781 } DONE goldilocks-quadratic blake3 log_n=11 threads=1
+SystemTime { tv_sec: 1788689520, tv_nsec: 906029780 } goldilocks-quadratic blake3 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=16384 matrix=32768 trees=320 scratch=30451488 peak_with_overhead=71680632; available_memory_bytes=Some(526760488960) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 908855715 } START goldilocks-quadratic blake3 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689520908654880-2018946
+SystemTime { tv_sec: 1788689520, tv_nsec: 910092523 } VERIFIED goldilocks-quadratic blake3 log_n=11 threads=3 repetition=1 proof_size=41118
+SystemTime { tv_sec: 1788689520, tv_nsec: 926707923 } DONE goldilocks-quadratic blake3 log_n=11 threads=3
+SystemTime { tv_sec: 1788689520, tv_nsec: 927098781 } f128-base keccak256 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=50276160 peak_with_overhead=96522912; available_memory_bytes=Some(526760488960) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 929633010 } START f128-base keccak256 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689520929518707-2018950
+SystemTime { tv_sec: 1788689520, tv_nsec: 932597677 } VERIFIED f128-base keccak256 log_n=11 threads=1 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689520, tv_nsec: 947809635 } DONE f128-base keccak256 log_n=11 threads=1
+SystemTime { tv_sec: 1788689520, tv_nsec: 948183384 } f128-base keccak256 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=54470464 peak_with_overhead=101765792; available_memory_bytes=Some(526760599552) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 951236504 } START f128-base keccak256 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689520951126441-2018952
+SystemTime { tv_sec: 1788689520, tv_nsec: 953823492 } VERIFIED f128-base keccak256 log_n=11 threads=3 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689520, tv_nsec: 968818775 } DONE f128-base keccak256 log_n=11 threads=3
+SystemTime { tv_sec: 1788689520, tv_nsec: 969209575 } f128-base sha256 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=50276160 peak_with_overhead=96522912; available_memory_bytes=Some(526760820736) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 972279225 } START f128-base sha256 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689520972152552-2018956
+SystemTime { tv_sec: 1788689520, tv_nsec: 974294821 } VERIFIED f128-base sha256 log_n=11 threads=1 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689520, tv_nsec: 989972999 } DONE f128-base sha256 log_n=11 threads=1
+SystemTime { tv_sec: 1788689520, tv_nsec: 990335147 } f128-base sha256 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=54470464 peak_with_overhead=101765792; available_memory_bytes=Some(526762659840) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689520, tv_nsec: 993441549 } START f128-base sha256 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689520993318676-2018958
+SystemTime { tv_sec: 1788689520, tv_nsec: 995239439 } VERIFIED f128-base sha256 log_n=11 threads=3 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689521, tv_nsec: 10976390 } DONE f128-base sha256 log_n=11 threads=3
+SystemTime { tv_sec: 1788689521, tv_nsec: 11339658 } f128-base blake3 log_n=11 threads=1: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=50276160 peak_with_overhead=96522912; available_memory_bytes=Some(526753677312) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689521, tv_nsec: 15035672 } START f128-base blake3 log_n=11 threads=1 seed=20260906 repetitions=1 metadata=1788689521014716655-2018963
+SystemTime { tv_sec: 1788689521, tv_nsec: 17207302 } VERIFIED f128-base blake3 log_n=11 threads=1 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689521, tv_nsec: 32112113 } DONE f128-base blake3 log_n=11 threads=1
+SystemTime { tv_sec: 1788689521, tv_nsec: 32465271 } f128-base blake3 log_n=11 threads=3: exact parameters PASS; estimated bytes coefficients=32768 matrix=65536 trees=320 scratch=54470464 peak_with_overhead=101765792; available_memory_bytes=Some(526747852800) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689521, tv_nsec: 35543851 } START f128-base blake3 log_n=11 threads=3 seed=20260906 repetitions=1 metadata=1788689521035425018-2018965
+SystemTime { tv_sec: 1788689521, tv_nsec: 37418004 } VERIFIED f128-base blake3 log_n=11 threads=3 repetition=1 proof_size=82078
+SystemTime { tv_sec: 1788689521, tv_nsec: 53144874 } DONE f128-base blake3 log_n=11 threads=3
+SystemTime { tv_sec: 1788689521, tv_nsec: 56598093 } goldilocks-quadratic blake3 log_n=20 threads=3: exact parameters PASS; estimated bytes coefficients=8388608 matrix=16777216 trees=261664 scratch=57171456 peak_with_overhead=136803112; available_memory_bytes=Some(526747369472) available_cpus=Some(256)
+SystemTime { tv_sec: 1788689521, tv_nsec: 59756905 } START goldilocks-quadratic blake3 log_n=20 threads=3 seed=20260906 repetitions=5 metadata=1788689521059612471-2018974
+SystemTime { tv_sec: 1788689521, tv_nsec: 161467101 } VERIFIED goldilocks-quadratic blake3 log_n=20 threads=3 repetition=1 proof_size=3495763
+SystemTime { tv_sec: 1788689521, tv_nsec: 271025286 } VERIFIED goldilocks-quadratic blake3 log_n=20 threads=3 repetition=2 proof_size=3627539
+SystemTime { tv_sec: 1788689521, tv_nsec: 378572585 } VERIFIED goldilocks-quadratic blake3 log_n=20 threads=3 repetition=3 proof_size=3708231
+SystemTime { tv_sec: 1788689521, tv_nsec: 466612908 } VERIFIED goldilocks-quadratic blake3 log_n=20 threads=3 repetition=4 proof_size=3528091
+SystemTime { tv_sec: 1788689521, tv_nsec: 554935548 } VERIFIED goldilocks-quadratic blake3 log_n=20 threads=3 repetition=5 proof_size=3511223
+SystemTime { tv_sec: 1788689521, tv_nsec: 559080763 } DONE goldilocks-quadratic blake3 log_n=20 threads=3

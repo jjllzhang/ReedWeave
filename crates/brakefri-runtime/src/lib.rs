@@ -1,5 +1,5 @@
-//! Local execution budget shared by upstream DFT and Merkle construction.
-use rayon::{ThreadPool, ThreadPoolBuilder};
+//! Local execution budget shared by upstream DFT, Merkle construction, and authentication.
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -31,5 +31,24 @@ impl ExecutionContext {
 
     pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
         self.pool.install(operation)
+    }
+
+    /// Authenticate independent trees within the same budget as DFT and tree construction.
+    /// The caller decides whether its authentication workload warrants coarse jobs.
+    /// Both paths install the pool so any nested upstream parallelism shares this budget.
+    /// No jobs outlive this call, including when an authentication fails.
+    pub fn try_for_each_tree<E: Send>(
+        &self,
+        tree_count: usize,
+        worthwhile: bool,
+        authenticate: impl Fn(usize) -> Result<(), E> + Send + Sync,
+    ) -> Result<(), E> {
+        self.install(|| {
+            if worthwhile && tree_count > 1 && self.threads() > 1 {
+                (0..tree_count).into_par_iter().try_for_each(authenticate)
+            } else {
+                (0..tree_count).try_for_each(authenticate)
+            }
+        })
     }
 }

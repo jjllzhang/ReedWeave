@@ -336,31 +336,39 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
         {
             return Err(PcsError::Shape("derived opening count"));
         }
-        self.initial_mmcs.verify_multi_batch(
-            &commitment.root,
-            Dimensions {
-                width: M,
-                height: self.params.domain_size(),
-            },
-            &sets[0],
-            &proof.initial_opening.rows,
-            &proof.initial_opening.proof,
-        )?;
-        for (j, opening) in proof.scalar_openings.iter().enumerate() {
+        // The wide initial tree is one indivisible upstream authentication job.
+        // Require at least 256 scalar leaves across the other trees before paying
+        // for coarse scheduling alongside it. This is a conservative work heuristic,
+        // not a measured crossover; small proofs use the same pool sequentially.
+        let scalar_leaves: usize = sets[1..].iter().map(Vec::len).sum();
+        execution.try_for_each_tree(self.params.rounds(), scalar_leaves >= 256, |tree| {
+            if tree == 0 {
+                return self.initial_mmcs.verify_multi_batch(
+                    &commitment.root,
+                    Dimensions {
+                        width: M,
+                        height: self.params.domain_size(),
+                    },
+                    &sets[0],
+                    &proof.initial_opening.rows,
+                    &proof.initial_opening.proof,
+                );
+            }
+            let opening = &proof.scalar_openings[tree - 1];
             // Width-one array views borrow the flat proof buffer without copying fields
             // or allocating a singleton field vector per authenticated value.
             let (rows, _) = opening.values.as_chunks::<1>();
             self.scalar_mmcs.verify_multi_batch(
-                &proof.rounds[j].next_oracle_root,
+                &proof.rounds[tree - 1].next_oracle_root,
                 Dimensions {
                     width: 1,
-                    height: self.params.domain_size() >> (j + 1),
+                    height: self.params.domain_size() >> tree,
                 },
-                &sets[j + 1],
+                &sets[tree],
                 rows,
                 &opening.proof,
-            )?;
-        }
+            )
+        })?;
         let initial: Vec<_> = proof
             .initial_opening
             .rows

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/brakefri-core", "crates/p3-f128-adapter", "crates/brakefri-primitives", "crates/brakefri-runtime"]
+members = ["crates/brakefri-core", "crates/p3-f128-adapter", "crates/brakefri-primitives", "crates/brakefri-runtime", "crates/brakefri-bench"]
 
 [workspace.package]
 version = "0.1.0"
