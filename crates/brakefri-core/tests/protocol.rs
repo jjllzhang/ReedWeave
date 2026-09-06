@@ -131,7 +131,7 @@ fn malformed<P: FieldProfile, S: HashSuite>(suite: S) {
                 .is_err()
         )
     };
-    for mutation in 0..18 {
+    for mutation in 0..25 {
         let mut proof = opening.proof.clone();
         match mutation {
             0 => {
@@ -162,6 +162,21 @@ fn malformed<P: FieldProfile, S: HashSuite>(suite: S) {
             }
             16 => proof.scalar_openings[0].values[0] += P::Challenge::ONE,
             17 => proof.scalar_openings[0].proof.sibling_hashes.push([0; 32]),
+            18 => proof.scalar_openings[0].values.swap(0, 1),
+            19 => {
+                proof.scalar_openings[0].values.pop();
+            }
+            20 => proof.scalar_openings[0].values.push(P::Challenge::ZERO),
+            21 => proof.initial_opening.rows[0].push(P::Base::ZERO),
+            22 => proof
+                .initial_opening
+                .rows
+                .push(proof.initial_opening.rows[0].clone()),
+            // No redundant terminal multiproof (or extra committed virtual word).
+            23 => proof
+                .scalar_openings
+                .push(proof.scalar_openings.last().unwrap().clone()),
+            24 => proof.initial_opening.proof.sibling_hashes.push([0; 32]),
             _ => unreachable!(),
         }
         reject(&proof);

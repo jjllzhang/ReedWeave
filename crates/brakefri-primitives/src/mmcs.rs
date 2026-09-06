@@ -166,6 +166,9 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
         self.state(state)?;
         check_indices(indices, state.matrix().height())?;
         let (values, proof) = self.upstream.open_multi_batch(indices, &state.tree);
+        if values.len() != indices.len() {
+            return Err(MmcsError::UpstreamShape);
+        }
         let rows = values
             .into_iter()
             .map(|mut matrices| {
@@ -182,21 +185,23 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
         Ok(MatrixOpening { rows, proof })
     }
 
-    pub fn verify_multi_batch(
+    /// Borrows owned rows, slices, or fixed arrays (including views of flat scalar values).
+    /// Upstream checks exact frontier consumption and authenticates the shared tree once.
+    pub fn verify_multi_batch<R: AsRef<[F]>>(
         &self,
         root: &Digest,
         dimensions: Dimensions,
         indices: &[usize],
-        rows: &[Vec<F>],
+        rows: &[R],
         proof: &MultiProof,
     ) -> Result<(), MmcsError> {
         self.dimensions(dimensions)?;
         check_indices(indices, dimensions.height)?;
-        if rows.len() != indices.len() || rows.iter().any(|row| row.len() != self.width) {
+        if rows.len() != indices.len() || rows.iter().any(|row| row.as_ref().len() != self.width) {
             return Err(MmcsError::WrongShape);
         }
         // Borrow field rows; only the upstream query/matrix shape needs small allocations.
-        let values: Vec<_> = rows.iter().map(|row| vec![row.as_slice()]).collect();
+        let values: Vec<_> = rows.iter().map(|row| vec![row.as_ref()]).collect();
         self.upstream.verify_multi_batch(
             &MerkleCap::new(vec![*root]),
             &[dimensions],

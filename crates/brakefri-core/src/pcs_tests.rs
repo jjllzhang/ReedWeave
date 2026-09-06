@@ -67,14 +67,14 @@ fn coefficient_word_folds_match_direct_polynomials_and_both_signs() {
 }
 
 /// Small reference prover: re-evaluate each folded polynomial directly. The production
-/// prover instead folds the retained words. Optionally corrupt just the first scalar
+/// prover instead folds the retained words. Optionally corrupt one selected scalar
 /// oracle while keeping all scalar identities, roots, and authentications valid.
 fn reference<P: FieldProfile, S: HashSuite>(
     pcs: &BrakeFri<P, S>,
     state: &ProverData<P, S>,
     z: P::Base,
     execution: &ExecutionContext,
-    corrupt: bool,
+    corrupt_layer: Option<usize>,
 ) -> (Opening<P>, Vec<usize>) {
     let k = pcs.params.k();
     let blocks: Vec<_> = state
@@ -139,7 +139,7 @@ fn reference<P: FieldProfile, S: HashSuite>(
                     .map(|(a, &c)| c * x.exp_u64(a as u64))
                     .sum();
                 value
-                    + if corrupt && j == 0 {
+                    + if corrupt_layer == Some(j) {
                         P::Challenge::ONE
                     } else {
                         P::Challenge::ZERO
@@ -163,7 +163,22 @@ fn reference<P: FieldProfile, S: HashSuite>(
     let terminal_values = [terminal_constant; 2];
     transcript.observe_terminal(terminal_constant, terminal_values);
     let starts = transcript.sample_queries();
-    let sets = query_sets(&pcs.params, &starts);
+    // Independent oracle-query reference: enumerate the natural domain and test
+    // membership using the signed points, rather than call production query_sets.
+    let sets: Vec<Vec<usize>> = (0..pcs.params.rounds())
+        .map(|j| {
+            let height = pcs.params.domain_size() >> j;
+            (0..height)
+                .filter(|&t| {
+                    starts.iter().any(|&start| {
+                        let index = start % height;
+                        t == index || t == (index + height / 2) % height
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(query_sets(&pcs.params, &starts), sets);
     let initial_opening = pcs
         .initial_mmcs
         .open_multi_batch(&sets[0], &state.initial)
@@ -208,7 +223,7 @@ fn interoperability<P: FieldProfile, S: HashSuite>(suite: S) {
     assert_eq!(state.coefficients.as_ptr(), original_allocation);
     let z = P::Base::ZERO;
     let production = pcs.prove(&state, z, &execution).unwrap();
-    let (reference, starts) = reference(&pcs, &state, z, &execution, false);
+    let (reference, starts) = reference(&pcs, &state, z, &execution, None);
     assert_eq!(starts.len(), Q);
     assert!(starts.iter().any(|&t| t >= params.domain_size() / 2));
     let mut unique = starts.clone();
@@ -249,11 +264,15 @@ fn interoperability<P: FieldProfile, S: HashSuite>(suite: S) {
     }
     pcs.verify(&commitment, z, reference.y, &reference.proof, &execution)
         .unwrap();
-    let (forged, _) = self::reference(&pcs, &state, z, &execution, true);
-    assert!(matches!(
-        pcs.verify(&commitment, z, forged.y, &forged.proof, &execution),
-        Err(PcsError::Fold { round: 0, .. })
-    ));
+    for layer in 0..params.rounds() - 1 {
+        let (forged, _) = self::reference(&pcs, &state, z, &execution, Some(layer));
+        // The first inconsistent edge ends in pi_(layer+1). All earlier folds,
+        // scalar checks, terminal checks, and shared authentications are valid.
+        assert!(matches!(
+            pcs.verify(&commitment, z, forged.y, &forged.proof, &execution),
+            Err(PcsError::Fold { query: 0, round }) if round == layer
+        ));
+    }
 }
 
 #[test]
@@ -264,6 +283,101 @@ fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
     interoperability::<F128Profile, _>(Sha256Suite);
     interoperability::<GoldilocksProfile, _>(KeccakSuite);
     interoperability::<F128Profile, _>(KeccakSuite);
+}
+
+/// A degree-k monomial in one initial column folds consistently through every
+/// queried scalar tree, but cannot fold to the claimed zero terminal word.
+/// This tests the final local equality after all other verification gates pass.
+fn bad_final_fold<P: FieldProfile>() {
+    let execution = ExecutionContext::new(1).unwrap();
+    let params = BrakeParams::new(P::PROFILE, 14).unwrap();
+    let pcs = BrakeFri::<P, _>::new(params.clone(), Blake3Suite).unwrap();
+    let omega = P::Base::two_adic_generator(params.log_domain_size());
+    let mut matrix = vec![P::Base::ZERO; params.domain_size() * M];
+    for t in 0..params.domain_size() {
+        matrix[t * M] = omega.exp_u64((t * params.k()) as u64);
+    }
+    let (root, initial) = pcs
+        .initial_mmcs
+        .commit(RowMajorMatrix::new(matrix, M), &execution)
+        .unwrap();
+    let commitment = Commitment { root };
+    let blocks = vec![P::Base::ZERO; M];
+    let mut transcript = pcs
+        .start(&commitment, P::Base::ZERO, P::Base::ZERO, &blocks)
+        .unwrap();
+    let weights: Vec<_> = (0..M).map(|_| transcript.sample_challenge()).collect();
+    assert_ne!(weights[0], P::Challenge::ZERO);
+    let mut rounds = Vec::new();
+    let mut layers = Vec::new();
+    for j in 0..params.rounds() {
+        transcript
+            .observe_round(j, P::Challenge::ZERO, P::Challenge::ZERO)
+            .unwrap();
+        let _gamma = transcript.sample_challenge();
+        let height = params.domain_size() >> (j + 1);
+        let degree = params.k() >> (j + 1);
+        // Direct polynomial evaluation, independent of the production fold code.
+        // All exponents before the last fold are even, so gamma has no effect.
+        let word = (0..height)
+            .map(|t| {
+                if j + 1 == params.rounds() {
+                    P::Challenge::ZERO
+                } else {
+                    weights[0] * omega.exp_u64(((t << (j + 1)) * degree) as u64)
+                }
+            })
+            .collect();
+        let (root, layer) = pcs
+            .scalar_mmcs
+            .commit(RowMajorMatrix::new_col(word), &execution)
+            .unwrap();
+        transcript.observe_round_root(j, &root).unwrap();
+        rounds.push(Round {
+            even_value: P::Challenge::ZERO,
+            odd_value: P::Challenge::ZERO,
+            next_oracle_root: root,
+        });
+        layers.push(layer);
+    }
+    transcript.observe_terminal(P::Challenge::ZERO, [P::Challenge::ZERO; 2]);
+    let starts = transcript.sample_queries();
+    assert_eq!(starts.len(), Q);
+    assert!(starts.iter().any(|&t| t < params.domain_size() / 2));
+    assert!(starts.iter().any(|&t| t >= params.domain_size() / 2));
+    let sets = query_sets(&params, &starts);
+    let proof = BrakeProof {
+        block_values: blocks,
+        rounds,
+        terminal_constant: P::Challenge::ZERO,
+        terminal_values: [P::Challenge::ZERO; 2],
+        initial_opening: pcs
+            .initial_mmcs
+            .open_multi_batch(&sets[0], &initial)
+            .unwrap(),
+        scalar_openings: (1..params.rounds())
+            .map(|j| {
+                let opening = pcs
+                    .scalar_mmcs
+                    .open_multi_batch(&sets[j], &layers[j - 1])
+                    .unwrap();
+                ScalarOpening {
+                    values: opening.rows.into_iter().map(|row| row[0]).collect(),
+                    proof: opening.proof,
+                }
+            })
+            .collect(),
+    };
+    assert!(matches!(
+        pcs.verify(&commitment, P::Base::ZERO, P::Base::ZERO, &proof, &execution),
+        Err(PcsError::Fold { query: 0, round }) if round == params.rounds() - 1
+    ));
+}
+
+#[test]
+fn authenticated_oracles_must_satisfy_the_final_fold() {
+    bad_final_fold::<GoldilocksProfile>();
+    bad_final_fold::<F128Profile>();
 }
 
 #[test]
@@ -324,6 +438,23 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
         opening.proof.terminal_values,
     );
     let sets = query_sets(&params, &transcript.sample_queries());
+    // A valid multiproof for another canonical set at the same root must not
+    // substitute for the verifier's transcript-derived positions.
+    let mut substituted = sets[0].clone();
+    let other = (0..params.domain_size())
+        .find(|index| substituted.binary_search(index).is_err())
+        .unwrap();
+    substituted[0] = other;
+    substituted.sort_unstable();
+    let mut forged = opening.proof.clone();
+    forged.initial_opening = pcs
+        .initial_mmcs
+        .open_multi_batch(&substituted, &state.initial)
+        .unwrap();
+    assert!(matches!(
+        pcs.verify(&commitment, F::TWO, opening.y, &forged, &execution),
+        Err(PcsError::Mmcs(_))
+    ));
     for (&index, expected) in sets[0].iter().zip(&opening.proof.initial_opening.rows) {
         let (row, path) = pcs.initial_mmcs.open_batch(index, &state.initial).unwrap();
         assert_eq!(&row, expected);

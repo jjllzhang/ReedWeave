@@ -347,7 +347,9 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
             &proof.initial_opening.proof,
         )?;
         for (j, opening) in proof.scalar_openings.iter().enumerate() {
-            let rows: Vec<_> = opening.values.iter().map(|&value| vec![value]).collect();
+            // Width-one array views borrow the flat proof buffer without copying fields
+            // or allocating a singleton field vector per authenticated value.
+            let (rows, _) = opening.values.as_chunks::<1>();
             self.scalar_mmcs.verify_multi_batch(
                 &proof.rounds[j].next_oracle_root,
                 Dimensions {
@@ -355,7 +357,7 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
                     height: self.params.domain_size() >> (j + 1),
                 },
                 &sets[j + 1],
-                &rows,
+                rows,
                 &opening.proof,
             )?;
         }
@@ -509,7 +511,9 @@ fn fold_word<P: FieldProfile>(
     result
 }
 
-/// The ordered experiment is preserved in `starts`; only transmitted indices are deduplicated.
+/// The ordered experiment is preserved in `starts`; only per-tree leaf indices are deduplicated.
+/// These sets are derived locally and are never transmitted. Binary search in each sorted
+/// set is the index-to-opening lookup, bounded by at most 2 * Q entries.
 fn query_sets(params: &BrakeParams, starts: &[usize]) -> Vec<Vec<usize>> {
     (0..params.rounds())
         .map(|j| {

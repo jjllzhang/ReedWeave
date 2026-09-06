@@ -30,7 +30,7 @@ Reviewed all new Rust sources, integration tests, manifests, and the locked depe
 
 The MMCS adapter enforces role, width, dimensions, and sorted unique nonempty indices; upstream enforces exact frontier consumption. Transcript methods enforce event shapes, while the future PCS controller must enforce sequencing and scalar checks. Future core operations must also bind the runtime `BrakeParams` profile to the selected `FieldProfile` and use the fixed initial width 1024. These remain M2/M3 integration obligations.
 
-## M2: complete (independently reviewed; awaiting parent commit)
+## M2: complete (independently reviewed and committed by parent)
 
 `brakefri-core` now exports `BrakeFri<P, S>`, `Commitment`, `ProverData<P, S>`, `Opening<P>`, `BrakeProof<P>`, `Round<K>`, `ScalarOpening<K>`, and structured `PcsError`. Construct a configuration with `BrakeFri::<GoldilocksProfile, _>::new(params, Blake3Suite)` (or either supported profile and any of the three suites). Its methods are `commit(coefficients, execution)`, `prove(&state, z, execution)`, and `verify(&commitment, z, y, &proof, execution)`. The verifier receives the caller's intended commitment and claim separately. `validate_shape` also exposes the preliminary public-geometry bounds for typed proofs.
 
@@ -54,9 +54,33 @@ Reviewed every M2 Rust source and test against HEAD, the full plan, the paper, a
 
 Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (35 tests, including all six new M2 tests discovered by Cargo), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Confirmed portable locked dependencies and ignored, untracked planning documents. M2 is ready to commit with no concrete blockers. The review report is in `.git/stages/M2-review-report.md`; later milestone work remains below.
 
-## Remaining milestones
+## M3: complete (independently reviewed; awaiting parent commit)
 
-- M3: independently audit, complete, and harden per-oracle sharing and adversarial verification. M2 already supplies the usable upstream multiproof path and all logical fold checks; there is no production individual-path or full-oracle fallback.
+Audited the M2 typed protocol and M1 MMCS adapter against plan Sections 8 and 9 and the paper's Section 3 query experiment. The existing protocol already assembled the required multiproofs. M3 hardens that path and adds focused acceptance evidence.
+
+### Architecture and audit
+
+`CanonicalMmcs::verify_multi_batch` now accepts rows implementing `AsRef<[F]>`. Initial matrix rows remain borrowed; scalar authentication passes width-one array views directly over the flat `ScalarOpening::values` buffer. This removes the previous singleton field allocations and field copies in the core verifier. Only the small nested slice containers required by the upstream single-matrix API are allocated. The opening adapter additionally checks upstream's outer query count before unwrapping each single-matrix row and validating its width.
+
+Verified that the ordered 244 starts are sampled with replacement after terminal checks and preserved for the nested query/round loop. Each local set is sorted and deduplicated by index within its own tree, includes both signs, and supplies a bounded binary-search lookup. No indices are proof fields. The initial tree authenticates base rows of width 1024; initial combinations are computed once per unique authenticated row. Scalar proofs contain flat values. There is no committed virtual pi0; every later root occurs once in the rounds. The two terminal values reconstruct their root and have no additional multiproof. Typed prefix, row-width, geometry bounds, and exact derived value counts precede shared authentication. All Q * ell local equalities retain the actual signed point and repeated logical queries.
+
+Inspected upstream `Mmcs` dispatch, `open_batch_pruned`, `walk_pruned_frontier`, and `pruning::restore_paths` at the locked compatible revision. Each queried tree receives exactly one upstream `open_multi_batch` during proving and one `verify_multi_batch` during verification. Upstream checks the exact frontier count, including missing and unused nodes, and shares internal-node authentication. Its temporary path buffers remain upstream implementation details. BrakeFRI neither traverses a second frontier nor expands proofs for verification; ordinary paths are used only as test references. No protocol acceptance defect was found in this audit.
+
+### M3 acceptance checks
+
+Added exhaustive tests of all 255 nonempty subsets of an eight-leaf scalar tree for both profiles and all three hash suites (1,530 subset cases). Borrowed flat scalar openings match independently verified ordinary paths, including the exact four-digest frontier order for indices 1, 2, 5. Each subset exercises wrong values, changed roots, missing/extra rows, wrong widths, swapped rows where applicable, extra boundary nodes, and missing/wrong nodes and index substitution where applicable. Full coverage accepts an empty frontier and rejects extra nodes. Equal-valued leaves remain distinct authenticated positions.
+
+The reference prover now derives its query sets independently by domain enumeration and signed membership. Its comparisons cover both signs and repeated queries across all six profile/suite combinations. Expanded correctly authenticated malicious-oracle fixtures to reject an invalid fold at each intermediate round. A separate direct-evaluation degree-k monomial fixture passes scalar, terminal, authentication, and all earlier fold checks but fails precisely the final local equality, for both profiles. The existing nonempty initial-frontier test now also rejects a valid multiproof for a substituted canonical set at the same root. Typed malformed cases additionally cover scalar reordering/counts, oversized initial widths/counts, extra empty-frontier nodes, and a redundant scalar opening.
+
+Passed `cargo test -p brakefri-core -p brakefri-primitives --locked` during implementation, then final `cargo fmt --all -- --check`, `cargo test --workspace --locked` (37 tests), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Self-reviewed all changed code and new tests against Sections 8 and 9. Cargo.lock and portable dependency sources are retained unchanged. The three planning documents remain ignored and untracked. No M3 blockers remain; changes are uncommitted for the parent. No benchmarks or proof-byte measurements were produced.
+
+### Independent M3 review
+
+Reviewed all M3 changes against HEAD, including the newly added Cargo integration test, the full typed controller, canonical MMCS/hash adapters, transcript controller integration, and upstream multiproof dispatch and frontier consumption at the locked revision. Confirmed borrowed scalar array views preserve canonical hashing without copying field values, exact shape checks protect verifier indexing, and all 244 ordered queries retain every signed fold check. The exhaustive subset test and authenticated intermediate/final bad-fold fixtures run under workspace tests. No concrete defects were found; no Rust fixes or additional tests were necessary.
+
+Independently passed `cargo fmt --all -- --check`, `cargo test --workspace --locked` (37 tests, none ignored), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check`. Cargo.lock and portable dependency sources are unchanged; planning documents and session files remain untracked. M3 is ready to commit with no concrete blockers. The report is `.git/stages/M3-review-report.md`.
+
+## Remaining milestones
 - M4: bounded protocol-only proof codecs and actual commitment-plus-evaluation byte accounting. F128 coordinate Serde in M1 is not a protocol proof codec.
 - M5: benchmark runtime integration, hash/field CLI dispatch, configuration parsing, preflight/sweep, and nine-column CSV output. The benchmark crate is deliberately not created as an empty placeholder. `configs/brakefri.toml` records planned settings but has no parser yet.
 - M6: requested successful measurements. No benchmark sweep or measurements have been produced.
