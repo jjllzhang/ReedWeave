@@ -12,3 +12,5 @@ p3-field.workspace = true
 p3-matrix.workspace = true
 num-bigint.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+postcard.workspace = true

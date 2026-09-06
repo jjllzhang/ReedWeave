@@ -1,4 +1,5 @@
 //! Standalone coefficient-input BrakeFRI with validated public parameters.
+pub mod codec;
 mod pcs;
 pub use brakefri_primitives::profile::Profile;
 use num_bigint::BigUint;

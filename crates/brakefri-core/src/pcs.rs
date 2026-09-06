@@ -430,37 +430,65 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
 
     /// Public-geometry bounds for typed callers, independently of future byte decoding.
     pub fn validate_shape(&self, proof: &BrakeProof<P>) -> Result<(), PcsError> {
-        if proof.block_values.len() != M
-            || proof.rounds.len() != self.params.rounds()
-            || proof.scalar_openings.len() != self.params.rounds() - 1
-        {
-            return Err(PcsError::Shape("prefix or layer count"));
-        }
-        let bounded = |j: usize, count: usize, nodes: usize| {
-            let height = self.params.domain_size() >> j;
-            count > 0
-                && count <= (2 * Q).min(height)
-                && nodes <= count * (self.params.log_domain_size() - j)
-        };
-        if !bounded(
-            0,
-            proof.initial_opening.rows.len(),
-            proof.initial_opening.proof.sibling_hashes.len(),
-        ) || proof.initial_opening.rows.iter().any(|row| row.len() != M)
-        {
-            return Err(PcsError::Shape("initial opening"));
-        }
-        for (j, opening) in proof.scalar_openings.iter().enumerate() {
-            if !bounded(
-                j + 1,
-                opening.values.len(),
-                opening.proof.sibling_hashes.len(),
-            ) {
-                return Err(PcsError::Shape("scalar opening"));
-            }
-        }
-        Ok(())
+        validate_proof_shape(&self.params, proof)
     }
+}
+
+/// Bounds shared by typed verification and the parameter-aware byte parser.
+pub(crate) fn opening_bounds(params: &BrakeParams, j: usize) -> Result<(usize, usize), PcsError> {
+    let height = params.layer_size(j).ok_or(PcsError::Shape("layer"))?;
+    let depth = params
+        .log_domain_size()
+        .checked_sub(j)
+        .ok_or(PcsError::Shape("depth"))?;
+    let count = Q
+        .checked_mul(2)
+        .ok_or(PcsError::Shape("query bound"))?
+        .min(height);
+    Ok((count, depth))
+}
+
+pub(crate) fn boundary_bound(count: usize, depth: usize) -> Result<usize, PcsError> {
+    count
+        .checked_mul(depth)
+        .ok_or(PcsError::Shape("boundary bound"))
+}
+
+pub(crate) fn validate_proof_shape<P: FieldProfile>(
+    params: &BrakeParams,
+    proof: &BrakeProof<P>,
+) -> Result<(), PcsError> {
+    if params.profile() != P::PROFILE {
+        return Err(PcsError::ProfileMismatch);
+    }
+    if proof.block_values.len() != M
+        || proof.rounds.len() != params.rounds()
+        || proof.scalar_openings.len() != params.rounds() - 1
+    {
+        return Err(PcsError::Shape("prefix or layer count"));
+    }
+    let bounded = |j, count, nodes| -> Result<bool, PcsError> {
+        let (maximum, depth) = opening_bounds(params, j)?;
+        Ok(count > 0 && count <= maximum && nodes <= boundary_bound(count, depth)?)
+    };
+    if !bounded(
+        0,
+        proof.initial_opening.rows.len(),
+        proof.initial_opening.proof.sibling_hashes.len(),
+    )? || proof.initial_opening.rows.iter().any(|row| row.len() != M)
+    {
+        return Err(PcsError::Shape("initial opening"));
+    }
+    for (j, opening) in proof.scalar_openings.iter().enumerate() {
+        if !bounded(
+            j + 1,
+            opening.values.len(),
+            opening.proof.sibling_hashes.len(),
+        )? {
+            return Err(PcsError::Shape("scalar opening"));
+        }
+    }
+    Ok(())
 }
 
 fn horner<F: Field>(coefficients: impl DoubleEndedIterator<Item = F>, point: F) -> F {
