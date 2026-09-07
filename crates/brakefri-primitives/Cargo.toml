@@ -18,7 +18,6 @@ p3-commit.workspace = true
 p3-merkle-tree.workspace = true
 p3-f128-adapter.workspace = true
 brakefri-runtime.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -8,9 +8,7 @@ pub use pcs::{
 };
 use thiserror::Error;
 
-pub const M: usize = 1024;
-pub const B: usize = 2;
-pub const Q: usize = 244;
+pub use brakefri_primitives::{B, M, Q};
 
 /// Validated geometry and exact interactive soundness parameters.
 #[derive(Clone, Debug, Eq, PartialEq)]

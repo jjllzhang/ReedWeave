@@ -136,7 +136,6 @@ dependencies = [
  "p3-maybe-rayon",
  "p3-merkle-tree",
  "p3-symmetric",
- "serde",
  "thiserror",
 ]
 

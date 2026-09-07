@@ -2,6 +2,7 @@
 use crate::fields::{CanonicalField, F128, Goldilocks, GoldilocksQuadratic};
 use crate::hash::{Digest, HASH_ID, TranscriptHash};
 use crate::profile::Profile;
+use crate::{B, M, Q};
 use core::marker::PhantomData;
 use p3_challenger::{CanObserve, CanSample, HashChallenger};
 use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
@@ -87,7 +88,7 @@ impl<P: FieldProfile> Transcript<P> {
         let mut context = Vec::new();
         append_string(&mut context, PROTOCOL_LABEL);
         context.push(P::PROFILE.id());
-        for value in [log_n as u64, 1024, 2, 244] {
+        for value in [log_n as u64, M as u64, B as u64, Q as u64] {
             context.extend(value.to_le_bytes());
         }
         append_string(&mut context, HASH_ID.as_bytes());
@@ -114,10 +115,10 @@ impl<P: FieldProfile> Transcript<P> {
         self.event(3, y.to_canonical_bytes().as_ref());
     }
     pub fn observe_block_values(&mut self, values: &[P::Base]) -> Result<(), TranscriptError> {
-        if values.len() != 1024 {
+        if values.len() != M {
             return Err(TranscriptError::Shape);
         }
-        let mut payload = 1024u64.to_le_bytes().to_vec();
+        let mut payload = (M as u64).to_le_bytes().to_vec();
         for value in values {
             payload.extend(value.to_canonical_bytes());
         }
@@ -156,9 +157,6 @@ impl<P: FieldProfile> Transcript<P> {
         }
         self.event(7, &payload);
     }
-    pub fn sample_base(&mut self) -> P::Base {
-        sample_base::<P::Base>(&mut self.challenger)
-    }
     pub fn sample_challenge(&mut self) -> P::Challenge {
         P::sample_challenge(&mut self.challenger)
     }
@@ -167,7 +165,7 @@ impl<P: FieldProfile> Transcript<P> {
         sample_index(&mut self.challenger, bits)
     }
     pub fn sample_queries(&mut self) -> Vec<usize> {
-        (0..244)
+        (0..Q)
             .map(|_| {
                 self.sample_index(self.rounds + 1)
                     .expect("validated domain")

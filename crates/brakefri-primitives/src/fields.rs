@@ -87,14 +87,10 @@ impl CanonicalField for F128 {
     const COORDINATE_BYTES: usize = 16;
 
     fn to_canonical_bytes(&self) -> Self::Bytes {
-        self.as_canonical_u128().to_le_bytes()
+        self.to_le_bytes()
     }
 
     fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalEncodingError> {
-        let value = u128::from_le_bytes(fixed(bytes)?);
-        if value >= F128::MODULUS {
-            return Err(CanonicalEncodingError::NonCanonical);
-        }
-        Ok(F128::new(value))
+        F128::from_le_bytes(fixed(bytes)?).map_err(|_| CanonicalEncodingError::NonCanonical)
     }
 }

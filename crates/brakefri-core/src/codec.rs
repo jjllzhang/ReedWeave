@@ -342,26 +342,18 @@ struct OpeningSeed<S> {
     values: S,
     depth: usize,
 }
-impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for OpeningSeed<S>
+impl<'de, S, T> DeserializeSeed<'de> for OpeningSeed<S>
 where
-    S::Value: OpeningValues,
+    S: DeserializeSeed<'de, Value = Vec<T>>,
 {
     type Value = (S::Value, MultiProof);
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         d.deserialize_tuple(2, self)
     }
 }
-trait OpeningValues {
-    fn count(&self) -> usize;
-}
-impl<T> OpeningValues for Vec<T> {
-    fn count(&self) -> usize {
-        self.len()
-    }
-}
-impl<'de, S: DeserializeSeed<'de>> Visitor<'de> for OpeningSeed<S>
+impl<'de, S, T> Visitor<'de> for OpeningSeed<S>
 where
-    S::Value: OpeningValues,
+    S: DeserializeSeed<'de, Value = Vec<T>>,
 {
     type Value = (S::Value, MultiProof);
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -369,7 +361,7 @@ where
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let values = seeded(&mut seq, self.values)?;
-        let max = boundary_bound(values.count(), self.depth).map_err(A::Error::custom)?;
+        let max = boundary_bound(values.len(), self.depth).map_err(A::Error::custom)?;
         let sibling_hashes = seeded(
             &mut seq,
             Sequence {

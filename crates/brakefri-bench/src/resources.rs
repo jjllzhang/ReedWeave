@@ -1,5 +1,7 @@
 use std::{fs, path::Path};
 
+use brakefri_core::{B, M, Q};
+
 use crate::{
     Result,
     config::{Case, Settings},
@@ -22,7 +24,7 @@ impl Estimate {
         let domain = params.domain_size() as u64;
         let base = case.field.base_bytes() as u64;
         let coefficients = n * base;
-        let matrix = 2 * coefficients;
+        let matrix = B as u64 * coefficients;
         // Initial binary tree plus all successively halved scalar trees.
         let trees = (4 * domain - params.rounds() as u64 - 5) * 32;
         // Conservatively allow a full normalization buffer, twiddles, combined/folded
@@ -30,9 +32,9 @@ impl Estimate {
         let scratch = matrix
             + domain * base
             + 8 * domain * 16
-            + 6 * (488 * 1024 * base
-                + 488 * params.rounds() as u64 * 16
-                + 488 * params.rounds() as u64 * params.rounds() as u64 * 32);
+            + 6 * (2 * Q as u64 * M as u64 * base
+                + 2 * Q as u64 * params.rounds() as u64 * 16
+                + 2 * Q as u64 * params.rounds() as u64 * params.rounds() as u64 * 32);
         let scratch = scratch
             .checked_add(
                 (case.threads as u64)
