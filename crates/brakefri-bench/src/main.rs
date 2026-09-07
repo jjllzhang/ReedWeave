@@ -31,12 +31,11 @@ fn execute(cli: Cli) -> Result<()> {
             let config = Config::load(&run.common)?;
             let case = Case {
                 field: run.field,
-                hash: run.hash,
                 log_n: run.log_n,
                 threads: run.threads,
             };
             case.params()?;
-            let settings = config.settings(&run.common, case.log_n);
+            let settings = config.settings(&run.common);
             if run.worker {
                 runner::run(&case, &settings)
             } else {
@@ -50,9 +49,9 @@ fn execute(cli: Cli) -> Result<()> {
 fn execute_matrix(matrix: config::Matrix, measure: bool) -> Result<()> {
     let config = Config::load(&matrix.common)?;
     let cases = config.cases(&matrix)?;
+    let settings = config.settings(&matrix.common);
     let mut failures = 0;
     for case in cases {
-        let settings = config.settings(&matrix.common, case.log_n);
         let result = if measure {
             isolated(&case, &settings, &matrix.common.config)
         } else {
@@ -86,7 +85,6 @@ fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Resul
         let estimate = Estimate::new(case)?;
         let description = resources::describe(case, &estimate, &available);
         eprintln!("{description}");
-        output::log(&settings.output, &description)?;
         resources::admit(&estimate, settings, &available)?;
         // Reject incompatible files before launching any expensive work.
         output::open_csv(&output::csv_path(case, &settings.output))?;
@@ -98,8 +96,6 @@ fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Resul
             .arg(config)
             .arg("--field")
             .arg(field_name(case.field))
-            .arg("--hash")
-            .arg(case.hash.name())
             .arg("--log-n")
             .arg(case.log_n.to_string())
             .arg("--threads")
@@ -118,6 +114,17 @@ fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Resul
         }
         let started = Instant::now();
         let mut child = command.spawn()?;
+        if settings.time_limit_seconds.is_none() {
+            let status = child.wait()?;
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(
+                    format!("child exited with {status}; unfinished trials remain unmeasured")
+                        .into(),
+                )
+            };
+        }
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -148,12 +155,9 @@ fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Resul
         }
     })();
     if let Err(error) = &result {
-        output::log(
-            &settings.output,
-            &format!("FAILED {}: {error}", case.label()),
-        )?;
+        eprintln!("FAILED {}: {error}", case.label());
     } else {
-        output::log(&settings.output, &format!("DONE {}", case.label()))?;
+        eprintln!("DONE {}", case.label());
     }
     result
 }

@@ -1,15 +1,15 @@
 //! Exhaustive small-tree frontier checks through borrowed flat scalar openings.
 use brakefri_primitives::{
     fields::{CanonicalField, F128, GoldilocksQuadratic},
-    hash::{Blake3Suite, HashSuite, KeccakSuite, Sha256Suite},
-    mmcs::{CanonicalMmcs, LeafKind},
+    hash::LeafKind,
+    mmcs::CanonicalMmcs,
 };
 use brakefri_runtime::ExecutionContext;
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
 
-fn all_subsets<F: CanonicalField, S: HashSuite>(suite: S) {
+fn all_subsets<F: CanonicalField>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let mmcs = CanonicalMmcs::<F, _>::new(suite, LeafKind::Challenge, 1).unwrap();
+    let mmcs = CanonicalMmcs::<F>::new(LeafKind::Challenge, 1).unwrap();
     let dimensions = Dimensions {
         width: 1,
         height: 8,
@@ -113,10 +113,6 @@ fn all_subsets<F: CanonicalField, S: HashSuite>(suite: S) {
 
 #[test]
 fn every_small_scalar_frontier_matches_paths_and_rejects_malformed_openings() {
-    all_subsets::<GoldilocksQuadratic, _>(KeccakSuite);
-    all_subsets::<F128, _>(KeccakSuite);
-    all_subsets::<GoldilocksQuadratic, _>(Sha256Suite);
-    all_subsets::<F128, _>(Sha256Suite);
-    all_subsets::<GoldilocksQuadratic, _>(Blake3Suite);
-    all_subsets::<F128, _>(Blake3Suite);
+    all_subsets::<GoldilocksQuadratic>();
+    all_subsets::<F128>();
 }

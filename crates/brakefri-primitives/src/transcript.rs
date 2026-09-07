@@ -1,6 +1,6 @@
 //! Sequential byte challenger and locally constructed protocol context.
 use crate::fields::{CanonicalField, F128, Goldilocks, GoldilocksQuadratic};
-use crate::hash::{Digest, HashSuite, TranscriptHash};
+use crate::hash::{Digest, HASH_ID, TranscriptHash};
 use crate::profile::Profile;
 use core::marker::PhantomData;
 use p3_challenger::{CanObserve, CanSample, HashChallenger};
@@ -68,19 +68,19 @@ pub enum TranscriptError {
 }
 
 #[derive(Clone)]
-pub struct Transcript<P: FieldProfile, S: HashSuite> {
-    challenger: HashChallenger<u8, TranscriptHash<S::Hasher>, 32>,
+pub struct Transcript<P: FieldProfile> {
+    challenger: HashChallenger<u8, TranscriptHash, 32>,
     rounds: usize,
     marker: PhantomData<P>,
 }
 
-impl<P: FieldProfile, S: HashSuite> Transcript<P, S> {
-    pub fn new(log_n: usize, suite: &S) -> Result<Self, TranscriptError> {
+impl<P: FieldProfile> Transcript<P> {
+    pub fn new(log_n: usize) -> Result<Self, TranscriptError> {
         if !(11..=30).contains(&log_n) {
             return Err(TranscriptError::UnsupportedSize);
         }
         let mut result = Self {
-            challenger: HashChallenger::new(Vec::new(), TranscriptHash(suite.hasher())),
+            challenger: HashChallenger::new(Vec::new(), TranscriptHash),
             rounds: log_n - 10,
             marker: PhantomData,
         };
@@ -90,7 +90,7 @@ impl<P: FieldProfile, S: HashSuite> Transcript<P, S> {
         for value in [log_n as u64, 1024, 2, 244] {
             context.extend(value.to_le_bytes());
         }
-        append_string(&mut context, S::ID.as_bytes());
+        append_string(&mut context, HASH_ID.as_bytes());
         append_string(&mut context, ENCODING_ID);
         result.event(1, &context);
         Ok(result)
@@ -193,8 +193,8 @@ fn sample_index(source: &mut impl CanSample<u8>, bits: usize) -> Result<usize, T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hash::{KeccakSuite, Sha256Suite};
     use crate::profile::{F128_MODULUS, GOLDILOCKS_MODULUS};
+    use p3_blake3::Blake3;
     use p3_field::PrimeCharacteristicRing;
     use p3_symmetric::CryptographicHasher;
     use std::collections::VecDeque;
@@ -244,35 +244,33 @@ mod tests {
     }
     #[test]
     fn context_and_upstream_byte_order() {
-        let mut t = Transcript::<GoldilocksProfile, KeccakSuite>::new(11, &KeccakSuite).unwrap();
+        let mut t = Transcript::<GoldilocksProfile>::new(11).unwrap();
         let mut context = Vec::new();
         append_string(&mut context, PROTOCOL_LABEL);
         context.push(1);
         for x in [11u64, 1024, 2, 244] {
             context.extend(x.to_le_bytes());
         }
-        append_string(&mut context, b"keccak256");
+        append_string(&mut context, b"blake3");
         append_string(&mut context, ENCODING_ID);
         let framed = [2u8, 1]
             .into_iter()
             .chain((context.len() as u64).to_le_bytes())
             .chain(context);
-        let digest = KeccakSuite.hasher().hash_iter(framed);
+        let digest = Blake3.hash_slice(&framed.collect::<Vec<_>>());
         for expected in digest.into_iter().rev() {
             assert_eq!(t.challenger.sample(), expected);
         }
         // After exhaustion the digest is chained in natural array order.
-        let next = KeccakSuite
-            .hasher()
-            .hash_iter([2].into_iter().chain(digest));
+        let next = Blake3.hash_slice(&[2].into_iter().chain(digest).collect::<Vec<_>>());
         assert_eq!(t.challenger.sample(), next[31]);
-        let mut a = Transcript::<GoldilocksProfile, KeccakSuite>::new(11, &KeccakSuite).unwrap();
-        let mut b = Transcript::<GoldilocksProfile, Sha256Suite>::new(11, &Sha256Suite).unwrap();
+        let mut a = Transcript::<GoldilocksProfile>::new(11).unwrap();
+        let mut b = Transcript::<GoldilocksProfile>::new(12).unwrap();
         assert_ne!(a.sample_challenge(), b.sample_challenge());
     }
-    fn replay_all_events<P: FieldProfile, S: HashSuite>(suite: S) {
-        let mut transcript = Transcript::<P, S>::new(12, &suite).unwrap();
-        let mut reference = HashChallenger::new(Vec::new(), TranscriptHash(suite.hasher()));
+    fn replay_all_events<P: FieldProfile>() {
+        let mut transcript = Transcript::<P>::new(12).unwrap();
+        let mut reference = HashChallenger::new(Vec::new(), TranscriptHash);
         fn observe<H: CryptographicHasher<u8, Digest>>(
             reference: &mut HashChallenger<u8, H, 32>,
             tag: u8,
@@ -292,7 +290,7 @@ mod tests {
         for value in [12u64, 1024, 2, 244] {
             context.extend(value.to_le_bytes());
         }
-        append_string(&mut context, S::ID.as_bytes());
+        append_string(&mut context, HASH_ID.as_bytes());
         append_string(&mut context, ENCODING_ID);
         observe(&mut reference, 1, context);
         let root = [9; 32];
@@ -368,18 +366,14 @@ mod tests {
     }
     #[test]
     fn complete_event_framing_replays_with_current_upstream() {
-        replay_all_events::<GoldilocksProfile, _>(KeccakSuite);
-        replay_all_events::<F128Profile, _>(KeccakSuite);
-        replay_all_events::<GoldilocksProfile, _>(Sha256Suite);
-        replay_all_events::<F128Profile, _>(Sha256Suite);
-        replay_all_events::<GoldilocksProfile, _>(crate::hash::Blake3Suite);
-        replay_all_events::<F128Profile, _>(crate::hash::Blake3Suite);
+        replay_all_events::<GoldilocksProfile>();
+        replay_all_events::<F128Profile>();
     }
     #[test]
     fn events_bind_statement_both_scalars_roots_and_terminal() {
-        let t = Transcript::<GoldilocksProfile, KeccakSuite>::new(11, &KeccakSuite).unwrap();
+        let t = Transcript::<GoldilocksProfile>::new(11).unwrap();
         let root = [3; 32];
-        let sample = |mut x: Transcript<GoldilocksProfile, KeccakSuite>| x.sample_challenge();
+        let sample = |mut x: Transcript<GoldilocksProfile>| x.sample_challenge();
         let mut a = t.clone();
         a.observe_statement(&root, Goldilocks::ONE);
         let mut b = t.clone();

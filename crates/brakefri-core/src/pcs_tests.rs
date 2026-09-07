@@ -1,13 +1,10 @@
 use super::*;
-use brakefri_primitives::{
-    hash::{Blake3Suite, KeccakSuite, Sha256Suite},
-    transcript::{F128Profile, GoldilocksProfile},
-};
+use brakefri_primitives::transcript::{F128Profile, GoldilocksProfile};
 
 fn algebra<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let dft = NaturalOrderDft::<P::Base>::default();
-    let mut transcript = Transcript::<P, Blake3Suite>::new(14, &Blake3Suite).unwrap();
+    let mut transcript = Transcript::<P>::new(14).unwrap();
     for log_k in 1..=5 {
         let k = 1 << log_k;
         let coefficients: Vec<_> = (0..k).map(|_| transcript.sample_challenge()).collect();
@@ -69,9 +66,9 @@ fn coefficient_word_folds_match_direct_polynomials_and_both_signs() {
 /// Small reference prover: re-evaluate each folded polynomial directly. The production
 /// prover instead folds the retained words. Optionally corrupt one selected scalar
 /// oracle while keeping all scalar identities, roots, and authentications valid.
-fn reference<P: FieldProfile, S: HashSuite>(
-    pcs: &BrakeFri<P, S>,
-    state: &ProverData<P, S>,
+fn reference<P: FieldProfile>(
+    pcs: &BrakeFri<P>,
+    state: &ProverData<P>,
     z: P::Base,
     execution: &ExecutionContext,
     corrupt_layer: Option<usize>,
@@ -93,7 +90,7 @@ fn reference<P: FieldProfile, S: HashSuite>(
         .enumerate()
         .map(|(i, &v)| v * z.exp_u64((i * k) as u64))
         .sum();
-    let mut transcript = Transcript::<P, S>::new(pcs.params.log_n(), &pcs.suite).unwrap();
+    let mut transcript = Transcript::<P>::new(pcs.params.log_n()).unwrap();
     transcript.observe_statement(&state.commitment.root, z);
     transcript.observe_claim(y);
     transcript.observe_block_values(&blocks).unwrap();
@@ -211,10 +208,10 @@ fn reference<P: FieldProfile, S: HashSuite>(
     )
 }
 
-fn interoperability<P: FieldProfile, S: HashSuite>(suite: S) {
+fn interoperability<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = BrakeParams::new(P::PROFILE, 14).unwrap();
-    let pcs = BrakeFri::<P, S>::new(params.clone(), suite).unwrap();
+    let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let coefficients: Vec<_> = (0..params.n())
         .map(|i| P::Base::from_usize(i + 3))
         .collect();
@@ -277,12 +274,8 @@ fn interoperability<P: FieldProfile, S: HashSuite>(suite: S) {
 
 #[test]
 fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
-    interoperability::<GoldilocksProfile, _>(Blake3Suite);
-    interoperability::<F128Profile, _>(Blake3Suite);
-    interoperability::<GoldilocksProfile, _>(Sha256Suite);
-    interoperability::<F128Profile, _>(Sha256Suite);
-    interoperability::<GoldilocksProfile, _>(KeccakSuite);
-    interoperability::<F128Profile, _>(KeccakSuite);
+    interoperability::<GoldilocksProfile>();
+    interoperability::<F128Profile>();
 }
 
 /// A degree-k monomial in one initial column folds consistently through every
@@ -291,7 +284,7 @@ fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
 fn bad_final_fold<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = BrakeParams::new(P::PROFILE, 14).unwrap();
-    let pcs = BrakeFri::<P, _>::new(params.clone(), Blake3Suite).unwrap();
+    let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let omega = P::Base::two_adic_generator(params.log_domain_size());
     let mut matrix = vec![P::Base::ZERO; params.domain_size() * M];
     for t in 0..params.domain_size() {
@@ -384,7 +377,7 @@ fn authenticated_oracles_must_satisfy_the_final_fold() {
 fn nonempty_boundaries_and_exact_upstream_authentication() {
     let execution = ExecutionContext::new(2).unwrap();
     let params = BrakeParams::new(GoldilocksProfile::PROFILE, 18).unwrap();
-    let pcs = BrakeFri::<GoldilocksProfile, _>::new(params.clone(), Blake3Suite).unwrap();
+    let pcs = BrakeFri::<GoldilocksProfile>::new(params.clone()).unwrap();
     type F = <GoldilocksProfile as FieldProfile>::Base;
     let (commitment, state) = pcs
         .commit(

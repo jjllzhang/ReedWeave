@@ -1,7 +1,6 @@
 use super::*;
 use brakefri_primitives::{
     fields::{F128, Goldilocks, GoldilocksQuadratic},
-    hash::{Blake3Suite, KeccakSuite, Sha256Suite},
     transcript::{F128Profile, GoldilocksProfile},
 };
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
@@ -54,11 +53,10 @@ fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
     payload + framing
 }
 
-fn fixture<P: FieldProfile, S: HashSuite>(
+fn fixture<P: FieldProfile>(
     log_n: usize,
-    suite: S,
 ) -> (
-    BrakeFri<P, S>,
+    BrakeFri<P>,
     ExecutionContext,
     Commitment,
     P::Base,
@@ -66,7 +64,7 @@ fn fixture<P: FieldProfile, S: HashSuite>(
 ) {
     let params = BrakeParams::new(P::PROFILE, log_n).unwrap();
     let execution = ExecutionContext::new(1).unwrap();
-    let pcs = BrakeFri::<P, S>::new(params.clone(), suite).unwrap();
+    let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let coefficients = (0..params.n())
         .map(|i| P::Base::from_usize(i * 17 + 3))
         .collect();
@@ -76,8 +74,8 @@ fn fixture<P: FieldProfile, S: HashSuite>(
     (pcs, execution, commitment, z, opening)
 }
 
-fn roundtrip<P: FieldProfile, S: HashSuite>(suite: S, log_n: usize) {
-    let (pcs, execution, commitment, z, opening) = fixture::<P, S>(log_n, suite);
+fn roundtrip<P: FieldProfile>(log_n: usize) {
+    let (pcs, execution, commitment, z, opening) = fixture::<P>(log_n);
     let commit_bytes = encode_commitment(&commitment);
     assert_eq!(commit_bytes, commitment.root);
     assert_eq!(decode_commitment(&commit_bytes).unwrap(), commitment);
@@ -150,23 +148,20 @@ fn roundtrip<P: FieldProfile, S: HashSuite>(suite: S, log_n: usize) {
 }
 
 #[test]
-fn actual_bytes_verify_for_every_field_and_suite() {
-    roundtrip::<GoldilocksProfile, _>(KeccakSuite, 12);
-    roundtrip::<GoldilocksProfile, _>(Sha256Suite, 12);
-    roundtrip::<GoldilocksProfile, _>(Blake3Suite, 12);
-    roundtrip::<F128Profile, _>(KeccakSuite, 12);
-    roundtrip::<F128Profile, _>(Sha256Suite, 12);
-    roundtrip::<F128Profile, _>(Blake3Suite, 12);
-    roundtrip::<GoldilocksProfile, _>(Blake3Suite, 18);
-    roundtrip::<F128Profile, _>(Blake3Suite, 18);
+fn actual_bytes_verify_for_every_field_and_size() {
+    roundtrip::<GoldilocksProfile>(12);
+    roundtrip::<F128Profile>(12);
+    // Nonempty initial and scalar frontiers.
+    roundtrip::<GoldilocksProfile>(18);
+    roundtrip::<F128Profile>(18);
     // ell=1 has no scalar openings, but still has a vector length of zero.
-    roundtrip::<GoldilocksProfile, _>(Blake3Suite, 11);
-    roundtrip::<F128Profile, _>(Blake3Suite, 11);
+    roundtrip::<GoldilocksProfile>(11);
+    roundtrip::<F128Profile>(11);
 }
 
 #[test]
 fn serde_interoperability_and_protocol_only_order() {
-    let (pcs, execution, commitment, z, opening) = fixture::<GoldilocksProfile, _>(12, Blake3Suite);
+    let (pcs, execution, commitment, z, opening) = fixture::<GoldilocksProfile>(12);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let wire: GoldWire = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
@@ -212,7 +207,7 @@ fn serde_interoperability_and_protocol_only_order() {
     )
     .unwrap();
 
-    let (pcs, execution, commitment, z, opening) = fixture::<F128Profile, _>(12, Sha256Suite);
+    let (pcs, execution, commitment, z, opening) = fixture::<F128Profile>(12);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let wire: F128Wire = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
@@ -370,7 +365,7 @@ fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layou
 }
 
 fn malformed<P: FieldProfile>() {
-    let (pcs, execution, commitment, z, opening) = fixture::<P, _>(12, Blake3Suite);
+    let (pcs, execution, commitment, z, opening) = fixture::<P>(12);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let layout = layout(pcs.params(), &opening.proof);
     assert_eq!(layout.at, bytes.len());

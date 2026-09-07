@@ -15,13 +15,10 @@ p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c6994
 p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 p3-maybe-rayon = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730", features = ["parallel"] }
 p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
-p3-keccak = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
-p3-sha256 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
-p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730", features = ["neon"] }
 p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
-p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 num-bigint = "0.5.1"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }

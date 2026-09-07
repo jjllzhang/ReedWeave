@@ -1,6 +1,6 @@
 use super::*;
 use brakefri_core::Profile;
-use config::{Common, Hash};
+use config::Common;
 
 fn common(path: &std::path::Path) -> Common {
     Common {
@@ -15,9 +15,8 @@ fn common(path: &std::path::Path) -> Common {
 fn case() -> Case {
     Case {
         field: Profile::GoldilocksQuadratic,
-        hash: Hash::Blake3,
         log_n: 20,
-        threads: 3,
+        threads: 32,
     }
 }
 #[test]
@@ -27,12 +26,10 @@ fn cli_lists_ranges_and_checked_config_overrides() {
         "preflight",
         "--fields",
         "goldilocks-quadratic,f128-base",
-        "--hashes",
-        "keccak256,sha256,blake3",
         "--log-n",
         "20..30",
         "--threads",
-        "1,3",
+        "1,32",
         "--repetitions",
         "2",
     ])
@@ -43,23 +40,13 @@ fn cli_lists_ranges_and_checked_config_overrides() {
     matrix.common.config = "../../configs/brakefri.toml".into();
     let config = Config::load(&matrix.common).unwrap();
     let cases = config.cases(&matrix).unwrap();
-    assert_eq!(cases.len(), 132);
+    assert_eq!(cases.len(), 44);
     assert_eq!(cases[0].log_n, 20);
     assert_eq!(cases.last().unwrap().log_n, 30);
-    assert_eq!(cases.last().unwrap().threads, 3);
-    assert_eq!(config.settings(&matrix.common, 20).repetitions, 2);
+    assert_eq!(cases.last().unwrap().threads, 32);
+    assert_eq!(config.settings(&matrix.common).repetitions, 2);
     matrix.common.repetitions = None;
-    for (size, count) in [
-        (11, 5),
-        (20, 5),
-        (24, 5),
-        (25, 3),
-        (27, 3),
-        (28, 1),
-        (30, 1),
-    ] {
-        assert_eq!(config.settings(&matrix.common, size).repetitions, count);
-    }
+    assert_eq!(config.settings(&matrix.common).repetitions, 5);
     for range in ["30..20", "10", "31", "20..=30", "20..30..30", "-1"] {
         assert!(config::sizes(range).is_err());
     }
@@ -69,8 +56,6 @@ fn cli_lists_ranges_and_checked_config_overrides() {
             "run",
             "--field",
             "unknown",
-            "--hash",
-            "blake3",
             "--log-n",
             "11",
             "--threads",
@@ -81,20 +66,6 @@ fn cli_lists_ranges_and_checked_config_overrides() {
             "run",
             "--field",
             "f128-base",
-            "--hash",
-            "unknown",
-            "--log-n",
-            "11",
-            "--threads",
-            "1",
-        ],
-        vec![
-            "bench",
-            "run",
-            "--field",
-            "f128-base",
-            "--hash",
-            "blake3",
             "--log-n",
             "11",
             "--threads",
@@ -111,8 +82,9 @@ fn cli_lists_ranges_and_checked_config_overrides() {
         source.replace("m = 1024", "m = 512"),
         source.replace("blowup = 2", "blowup = 4"),
         source.replace("num_queries = 244", "num_queries = 243"),
-        source.replace("threads = [1, 2, 4, 8, 16]", "threads = [0]"),
-        source.replace("repetitions_small = 5", "repetitions_small = 0"),
+        source.replace("threads = [1, 32]", "threads = [0]"),
+        source.replace("threads = [1, 32]", "threads = [1, 16]"),
+        source.replace("repetitions = 5", "repetitions = 0"),
         source.replace("log_n_max = 30", "log_n_max = 31"),
     ] {
         let c: Config = toml::from_str(&invalid).unwrap();
@@ -140,7 +112,7 @@ fn csv_exact_header_append_and_accounting() {
     };
     for _ in 0..2 {
         let mut file = output::open_csv(&path).unwrap();
-        output::append_trial(&mut file, &case, &trial).unwrap();
+        output::append_trial(&mut file, &case.params().unwrap(), case.threads, &trial).unwrap();
     }
     let text = std::fs::read_to_string(&path).unwrap();
     let lines: Vec<_> = text.lines().collect();
@@ -148,7 +120,7 @@ fn csv_exact_header_append_and_accounting() {
     assert_eq!(lines[0], output::HEADER);
     assert_eq!(
         lines[1],
-        "20,1024,1024,0.5,3,0.100000000,0.200000000,0.300000000,12345"
+        "20,1024,1024,0.5,32,0.100000000,0.200000000,0.300000000,12345"
     );
     assert!(lines.iter().all(|line| line.split(',').count() == 9));
     std::fs::write(&path, "wrong,header\n").unwrap();

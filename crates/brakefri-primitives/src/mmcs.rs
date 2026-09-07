@@ -11,19 +11,12 @@ use thiserror::Error;
 
 use crate::fields::CanonicalField;
 pub use crate::hash::LeafKind;
-use crate::hash::{CanonicalLeafHash, Digest, HashSuite, NodeHash};
+use crate::hash::{CanonicalLeafHash, Digest, NodeHash};
 
 pub type MultiProof = p3_merkle_tree::PrunedMerklePaths<u8, 32>;
 pub type SingleProof = Vec<Digest>;
 type Tree<F> = MerkleTree<F, u8, RowMajorMatrix<F>, 2, 32>;
-type Upstream<F, S> = MerkleTreeMmcs<
-    F,
-    u8,
-    CanonicalLeafHash<F, <S as HashSuite>::Hasher>,
-    NodeHash<<S as HashSuite>::Hasher>,
-    2,
-    32,
->;
+type Upstream<F> = MerkleTreeMmcs<F, u8, CanonicalLeafHash<F>, NodeHash, 2, 32>;
 
 #[derive(Debug, Error)]
 pub enum MmcsError {
@@ -37,7 +30,7 @@ pub enum MmcsError {
     WrongShape,
     #[error("indices must be nonempty, strictly increasing, and below the tree height")]
     InvalidIndices,
-    #[error("prover state belongs to a different suite or leaf configuration")]
+    #[error("prover state belongs to a different leaf configuration")]
     StateMismatch,
     #[error("upstream returned an invalid single-matrix shape")]
     UpstreamShape,
@@ -46,14 +39,13 @@ pub enum MmcsError {
 }
 
 /// Owns the only retained matrix. Tree internals cannot be mutated by callers.
-pub struct MatrixProverData<F: CanonicalField, S: HashSuite> {
+pub struct MatrixProverData<F: CanonicalField> {
     tree: Tree<F>,
-    upstream: Upstream<F, S>,
-    suite_id: &'static str,
+    upstream: Upstream<F>,
     kind: LeafKind,
 }
 
-impl<F: CanonicalField, S: HashSuite> MatrixProverData<F, S> {
+impl<F: CanonicalField> MatrixProverData<F> {
     pub fn matrix(&self) -> &RowMajorMatrix<F> {
         self.upstream.get_matrices(&self.tree)[0]
     }
@@ -67,14 +59,14 @@ pub struct MatrixOpening<F> {
 
 /// The width and leaf role are trusted configuration, never proof-selected.
 #[derive(Clone)]
-pub struct CanonicalMmcs<F: CanonicalField, S: HashSuite> {
-    upstream: Upstream<F, S>,
+pub struct CanonicalMmcs<F: CanonicalField> {
+    upstream: Upstream<F>,
     width: usize,
     kind: LeafKind,
 }
 
-impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
-    pub fn new(suite: S, kind: LeafKind, width: usize) -> Result<Self, MmcsError> {
+impl<F: CanonicalField> CanonicalMmcs<F> {
+    pub fn new(kind: LeafKind, width: usize) -> Result<Self, MmcsError> {
         let valid_role = matches!(
             (
                 F::PROFILE_ID,
@@ -98,13 +90,12 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
             .checked_mul(F::BYTE_WIDTH)
             .ok_or(MmcsError::SizeOverflow)?;
         let leaf = CanonicalLeafHash {
-            hasher: suite.hasher(),
             kind,
             coordinate_count,
             marker: PhantomData,
         };
         Ok(Self {
-            upstream: MerkleTreeMmcs::new(leaf, NodeHash(suite.hasher()), 0),
+            upstream: MerkleTreeMmcs::new(leaf, NodeHash, 0),
             width,
             kind,
         })
@@ -124,9 +115,8 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
         Ok(())
     }
 
-    fn state(&self, state: &MatrixProverData<F, S>) -> Result<(), MmcsError> {
-        if state.suite_id != S::ID || state.kind != self.kind || state.matrix().width != self.width
-        {
+    fn state(&self, state: &MatrixProverData<F>) -> Result<(), MmcsError> {
+        if state.kind != self.kind || state.matrix().width != self.width {
             return Err(MmcsError::StateMismatch);
         }
         Ok(())
@@ -136,7 +126,7 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
         &self,
         matrix: RowMajorMatrix<F>,
         execution: &ExecutionContext,
-    ) -> Result<(Digest, MatrixProverData<F, S>), MmcsError> {
+    ) -> Result<(Digest, MatrixProverData<F>), MmcsError> {
         // Inspect raw fields first: Matrix::height divides by width.
         if matrix.width == 0 || !matrix.values.len().is_multiple_of(matrix.width) {
             return Err(MmcsError::InvalidDimensions);
@@ -151,7 +141,6 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
             MatrixProverData {
                 tree,
                 upstream: self.upstream.clone(),
-                suite_id: S::ID,
                 kind: self.kind,
             },
         ))
@@ -161,7 +150,7 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
     pub fn open_multi_batch(
         &self,
         indices: &[usize],
-        state: &MatrixProverData<F, S>,
+        state: &MatrixProverData<F>,
     ) -> Result<MatrixOpening<F>, MmcsError> {
         self.state(state)?;
         check_indices(indices, state.matrix().height())?;
@@ -216,7 +205,7 @@ impl<F: CanonicalField, S: HashSuite> CanonicalMmcs<F, S> {
     pub fn open_batch(
         &self,
         index: usize,
-        state: &MatrixProverData<F, S>,
+        state: &MatrixProverData<F>,
     ) -> Result<(Vec<F>, SingleProof), MmcsError> {
         self.state(state)?;
         check_indices(&[index], state.matrix().height())?;

@@ -1,9 +1,10 @@
 use brakefri_primitives::{
     fields::{CanonicalField, F128, Goldilocks, GoldilocksQuadratic},
-    hash::{Blake3Suite, Digest, HashSuite, KeccakSuite, NodeHash, Sha256Suite, TranscriptHash},
-    mmcs::{CanonicalMmcs, LeafKind},
+    hash::{Digest, LeafKind, NodeHash, TranscriptHash},
+    mmcs::CanonicalMmcs,
 };
 use brakefri_runtime::ExecutionContext;
+use p3_blake3::Blake3;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
 use p3_symmetric::{CryptographicHasher, PseudoCompressionFunction};
@@ -13,48 +14,33 @@ fn hex(s: &str) -> Digest {
     std::array::from_fn(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
 }
 
-fn known_answers<S: HashSuite>(suite: S, empty: &str, abc: &str) {
-    assert_eq!(suite.hasher().hash_slice(b""), hex(empty));
-    assert_eq!(suite.hasher().hash_slice(b"abc"), hex(abc));
-    let raw = suite.hasher();
-    let transcript = TranscriptHash(raw.clone());
-    assert_eq!(transcript.hash_slice(b"abc"), raw.hash_slice(b"\x02abc"));
-    assert_ne!(transcript.hash_slice(b"abc"), raw.hash_slice(b"abc"));
-    let inputs = [[0; 32], [1; 32]];
-    let mut bytes = [0; 65];
-    bytes[0] = 1;
-    bytes[33..].fill(1);
-    let node = NodeHash(raw.clone()).compress(inputs);
-    assert_eq!(node, raw.hash_slice(&bytes));
-    assert_ne!(node, transcript.hash_slice(&bytes[1..]));
-    assert_ne!(node, NodeHash(raw).compress([inputs[1], inputs[0]]));
-}
-
 #[test]
-fn all_hash_backends_match_known_vectors_and_role_preimages() {
-    known_answers(
-        KeccakSuite,
-        "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45",
-    );
-    known_answers(
-        Sha256Suite,
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-    );
-    known_answers(
-        Blake3Suite,
-        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
-        "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+fn blake3_matches_known_vectors_and_role_preimages() {
+    assert_eq!(
+        Blake3.hash_slice(b""),
+        hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
     );
     assert_eq!(
-        NodeHash(Sha256Suite.hasher()).compress([[0; 32], [1; 32]]),
-        hex("2ad82c3a51e8ed6418cb5bf267c5f9e521b99f7ab4fce657f460a8f1a3e87b2e")
+        Blake3.hash_slice(b"abc"),
+        hex("6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85")
     );
+    let transcript = TranscriptHash;
     assert_eq!(
-        TranscriptHash(Sha256Suite.hasher()).hash_slice(b"abc"),
-        hex("909ac45e439911193205994d09399c29fede977ab212605f29ead5250a812e73")
+        transcript.hash_slice(b"abc"),
+        hex("16397a3c72e1b09eb34559edb332c5d7663fa4b59c9fdb6163a66490e4a9a892")
     );
+    assert_ne!(transcript.hash_slice(b"abc"), Blake3.hash_slice(b"abc"));
+    let inputs = [[0; 32], [1; 32]];
+    let node = NodeHash.compress(inputs);
+    assert_eq!(
+        node,
+        hex("9c0959bbfdc28397be447a8f4e58f30b9d8b44c8dff92d02bf14aa4e92758197")
+    );
+    assert_ne!(
+        node,
+        Blake3.hash_slice(b"\x01\x00\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0")
+    );
+    assert_ne!(node, NodeHash.compress([inputs[1], inputs[0]]));
 }
 
 fn quadratic(a: u64, b: u64) -> GoldilocksQuadratic {
@@ -109,7 +95,7 @@ fn canonical_coordinates_reject_aliases_and_preserve_basis_order() {
 }
 
 fn root_vector<F: CanonicalField>(kind: LeafKind, values: Vec<F>, expected: &str) {
-    let mmcs = CanonicalMmcs::<F, _>::new(Sha256Suite, kind, 1).unwrap();
+    let mmcs = CanonicalMmcs::<F>::new(kind, 1).unwrap();
     let execution = ExecutionContext::new(1).unwrap();
     let (root, state) = mmcs
         .commit(RowMajorMatrix::new_col(values), &execution)
@@ -131,37 +117,33 @@ fn root_vector<F: CanonicalField>(kind: LeafKind, values: Vec<F>, expected: &str
 }
 
 #[test]
-fn canonical_merkle_roots_match_independent_sha256_vectors() {
-    // Fixed vectors computed with Python hashlib from the plan's exact byte preimages.
+fn canonical_merkle_roots_match_independent_blake3_vectors() {
+    // Fixed vectors computed with the BLAKE3 reference implementation from
+    // the protocol's exact byte preimages.
     root_vector(
         LeafKind::Base,
         vec![Goldilocks::new(1), Goldilocks::new(2)],
-        "86d84946fde40646fd39e82b78266848c5ee2f89b98822054b10dc6cd0b3372a",
+        "314c764a1a2f4fb27f0cdbced45ba793deaf9f10f7cfc244798e3047988de5ec",
     );
     root_vector(
         LeafKind::Challenge,
         vec![quadratic(1, 2), quadratic(3, 4)],
-        "0ca48e915a5495a4d429a4cb5efd9fa003cae0173c6de112fae16da05890a63d",
+        "abae38dbf2e2987726687f7e9216a67fbe19de3121f78dad4eb53283a36a7a64",
     );
     root_vector(
         LeafKind::Base,
         vec![F128::new(1), F128::new(2)],
-        "cabb6fcaba236863a90cd05ca1d0ab3ef0bec7b83a89cada085699048e386352",
+        "d6d7487ad19c98cbeb83722e851aadc166ee71d44fe09fa2e970541135d2877e",
     );
     root_vector(
         LeafKind::Challenge,
         vec![F128::new(1), F128::new(2)],
-        "a651684f820dddab30f614b6075819af1eb79db49035277cdd4a91a1e80ad226",
+        "36594bb91b4210bccf0ebc4fbc5c5a70696ae25030bd1eb8eb6a0419c51d3fe1",
     );
 }
 
-fn multiproof_cases<F: CanonicalField, S: HashSuite>(
-    suite: S,
-    kind: LeafKind,
-    width: usize,
-    values: Vec<F>,
-) {
-    let mmcs = CanonicalMmcs::<F, _>::new(suite, kind, width).unwrap();
+fn multiproof_cases<F: CanonicalField>(kind: LeafKind, width: usize, values: Vec<F>) {
+    let mmcs = CanonicalMmcs::<F>::new(kind, width).unwrap();
     let execution = ExecutionContext::new(2).unwrap();
     let dimensions = Dimensions { width, height: 8 };
     let (root, state) = mmcs
@@ -281,44 +263,22 @@ fn multiproof_cases<F: CanonicalField, S: HashSuite>(
     verify(&root, dimensions, &all, &opening.rows, &opening.proof).unwrap();
 }
 
-fn suite_cases<S: HashSuite>(suite: S) {
+#[test]
+fn base_and_extension_multiproofs_and_malformed_openings() {
+    multiproof_cases(LeafKind::Base, 3, (0..24).map(Goldilocks::new).collect());
     multiproof_cases(
-        suite.clone(),
-        LeafKind::Base,
-        3,
-        (0..24).map(Goldilocks::new).collect(),
-    );
-    multiproof_cases(
-        suite.clone(),
         LeafKind::Challenge,
         1,
         (0..8).map(|i| quadratic(i, 100 + i)).collect(),
     );
-    multiproof_cases(
-        suite.clone(),
-        LeafKind::Base,
-        3,
-        (0..24).map(F128::new).collect(),
-    );
-    multiproof_cases(
-        suite,
-        LeafKind::Challenge,
-        1,
-        (0..8).map(F128::new).collect(),
-    );
+    multiproof_cases(LeafKind::Base, 3, (0..24).map(F128::new).collect());
+    multiproof_cases(LeafKind::Challenge, 1, (0..8).map(F128::new).collect());
 }
 
 #[test]
-fn base_and_extension_multiproofs_and_malformed_openings() {
-    suite_cases(KeccakSuite);
-    suite_cases(Sha256Suite);
-    suite_cases(Blake3Suite);
-}
-
-#[test]
-fn reject_wrong_suite_role_and_malformed_commit_shapes() {
+fn reject_wrong_role_and_malformed_commit_shapes() {
     let execution = ExecutionContext::new(1).unwrap();
-    let mmcs = CanonicalMmcs::<Goldilocks, _>::new(KeccakSuite, LeafKind::Base, 1).unwrap();
+    let mmcs = CanonicalMmcs::<Goldilocks>::new(LeafKind::Base, 1).unwrap();
     let (root, state) = mmcs
         .commit(
             RowMajorMatrix::new_col(vec![Goldilocks::ONE; 8]),
@@ -326,13 +286,13 @@ fn reject_wrong_suite_role_and_malformed_commit_shapes() {
         )
         .unwrap();
     let opening = mmcs.open_multi_batch(&[1, 2, 5], &state).unwrap();
-    let wrong = CanonicalMmcs::<Goldilocks, _>::new(Sha256Suite, LeafKind::Base, 1).unwrap();
+    let wrong = CanonicalMmcs::<Goldilocks>::new(LeafKind::Base, 2).unwrap();
     assert!(
         wrong
             .verify_multi_batch(
                 &root,
                 Dimensions {
-                    width: 1,
+                    width: 2,
                     height: 8
                 },
                 &[1, 2, 5],
@@ -341,18 +301,18 @@ fn reject_wrong_suite_role_and_malformed_commit_shapes() {
             )
             .is_err()
     );
-    assert!(CanonicalMmcs::<Goldilocks, _>::new(KeccakSuite, LeafKind::Challenge, 1).is_err());
-    assert!(CanonicalMmcs::<GoldilocksQuadratic, _>::new(KeccakSuite, LeafKind::Base, 1).is_err());
-    assert!(CanonicalMmcs::<F128, _>::new(KeccakSuite, LeafKind::Challenge, 2).is_err());
-    assert!(CanonicalMmcs::<Goldilocks, _>::new(KeccakSuite, LeafKind::Base, 0).is_err());
+    assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Challenge, 1).is_err());
+    assert!(CanonicalMmcs::<GoldilocksQuadratic>::new(LeafKind::Base, 1).is_err());
+    assert!(CanonicalMmcs::<F128>::new(LeafKind::Challenge, 2).is_err());
+    assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Base, 0).is_err());
     for (width, length) in [(0, 0), (0, 4), (1, 0), (1, 1), (1, 3), (2, 3), (2, 8)] {
         // Public fields can be mutated after the constructor's shape assertions.
         let mut matrix = RowMajorMatrix::new_col(vec![Goldilocks::ZERO; length]);
         matrix.width = width;
         assert!(mmcs.commit(matrix, &execution).is_err());
     }
-    let base = CanonicalMmcs::<F128, _>::new(KeccakSuite, LeafKind::Base, 1).unwrap();
-    let challenge = CanonicalMmcs::<F128, _>::new(KeccakSuite, LeafKind::Challenge, 1).unwrap();
+    let base = CanonicalMmcs::<F128>::new(LeafKind::Base, 1).unwrap();
+    let challenge = CanonicalMmcs::<F128>::new(LeafKind::Challenge, 1).unwrap();
     let (root, state) = base
         .commit(RowMajorMatrix::new_col(vec![F128::ONE; 2]), &execution)
         .unwrap();

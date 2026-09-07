@@ -1,27 +1,10 @@
 use std::path::PathBuf;
 
 use brakefri_core::{BrakeParams, Profile};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use serde::Deserialize;
 
 use crate::Result;
-
-#[derive(Clone, Copy, Debug, Deserialize, ValueEnum, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum Hash {
-    Keccak256,
-    Sha256,
-    Blake3,
-}
-impl Hash {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Keccak256 => "keccak256",
-            Self::Sha256 => "sha256",
-            Self::Blake3 => "blake3",
-        }
-    }
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -68,8 +51,6 @@ pub struct Run {
     pub common: Common,
     #[arg(long)]
     pub field: Profile,
-    #[arg(long, value_enum)]
-    pub hash: Hash,
     #[arg(long)]
     pub log_n: usize,
     #[arg(long)]
@@ -83,8 +64,6 @@ pub struct Matrix {
     pub common: Common,
     #[arg(long, value_delimiter = ',')]
     pub fields: Option<Vec<Profile>>,
-    #[arg(long, value_delimiter = ',', value_enum)]
-    pub hashes: Option<Vec<Hash>>,
     /// Single size or inclusive range, for example 20..30.
     #[arg(long)]
     pub log_n: Option<String>,
@@ -108,13 +87,11 @@ pub struct Protocol {
 #[serde(deny_unknown_fields)]
 pub struct Benchmark {
     pub fields: Vec<String>,
-    pub hashes: Vec<Hash>,
     pub log_n_min: usize,
     pub log_n_max: usize,
     pub threads: Vec<usize>,
-    pub repetitions_small: usize,
-    pub repetitions_medium: usize,
-    pub repetitions_large: usize,
+    /// Repetitions per configuration, independent of polynomial size.
+    pub repetitions: usize,
     pub output_dir: PathBuf,
     #[serde(default = "default_seed")]
     pub seed: u64,
@@ -127,22 +104,20 @@ const fn default_seed() -> u64 {
 #[derive(Clone, Debug)]
 pub struct Case {
     pub field: Profile,
-    pub hash: Hash,
     pub log_n: usize,
     pub threads: usize,
 }
 impl Case {
     pub fn params(&self) -> Result<BrakeParams> {
-        if self.threads == 0 {
-            return Err("threads must be positive".into());
+        if !matches!(self.threads, 1 | 32) {
+            return Err("bench threads must be 1 or 32".into());
         }
         Ok(BrakeParams::new(self.field, self.log_n)?)
     }
     pub fn label(&self) -> String {
         format!(
-            "{} {} log_n={} threads={}",
+            "{} log_n={} threads={}",
             field_name(self.field),
-            self.hash.name(),
             self.log_n,
             self.threads
         )
@@ -174,21 +149,14 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         let b = &self.benchmark;
         if b.fields.is_empty()
-            || b.hashes.is_empty()
             || b.threads.is_empty()
-            || b.threads.contains(&0)
+            || b.threads.iter().any(|t| !matches!(t, 1 | 32))
         {
-            return Err("fields, hashes and positive threads must be nonempty".into());
+            return Err(
+                "fields and threads must be nonempty; bench threads must be 1 or 32".into(),
+            );
         }
-        if [
-            b.repetitions_small,
-            b.repetitions_medium,
-            b.repetitions_large,
-        ]
-        .contains(&0)
-            || b.max_memory_mib == Some(0)
-            || b.time_limit_seconds == Some(0)
-        {
+        if b.repetitions == 0 || b.max_memory_mib == Some(0) || b.time_limit_seconds == Some(0) {
             return Err("repetitions and configured resource limits must be positive".into());
         }
         let sizes = sizes(&format!("{}..{}", b.log_n_min, b.log_n_max))?;
@@ -206,29 +174,26 @@ impl Config {
         }
         Ok(())
     }
-    pub fn settings(&self, common: &Common, size: usize) -> Settings {
+    pub fn settings(&self, common: &Common) -> Settings {
         let b = &self.benchmark;
         Settings {
             output: common.out.clone().unwrap_or_else(|| b.output_dir.clone()),
             seed: common.seed.unwrap_or(b.seed),
-            repetitions: common.repetitions.unwrap_or(match size {
-                11..=24 => b.repetitions_small,
-                25..=27 => b.repetitions_medium,
-                _ => b.repetitions_large,
-            }),
+            repetitions: common.repetitions.unwrap_or(b.repetitions),
             max_memory_mib: common.max_memory_mib.or(b.max_memory_mib),
             time_limit_seconds: common.time_limit_seconds.or(b.time_limit_seconds),
         }
     }
     pub fn cases(&self, matrix: &Matrix) -> Result<Vec<Case>> {
         let b = &self.benchmark;
-        let fields = matrix.fields.clone().unwrap_or(
-            b.fields
+        let fields = match &matrix.fields {
+            Some(fields) => fields.clone(),
+            None => b
+                .fields
                 .iter()
                 .map(|f| f.parse())
-                .collect::<std::result::Result<_, _>>()?,
-        );
-        let hashes = matrix.hashes.as_ref().unwrap_or(&b.hashes);
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+        };
         let threads = matrix.threads.as_ref().unwrap_or(&b.threads);
         let sizes = sizes(
             &matrix
@@ -236,23 +201,20 @@ impl Config {
                 .clone()
                 .unwrap_or_else(|| format!("{}..{}", b.log_n_min, b.log_n_max)),
         )?;
-        if fields.is_empty() || hashes.is_empty() || threads.is_empty() {
+        if fields.is_empty() || threads.is_empty() {
             return Err("case lists must be nonempty".into());
         }
         let mut cases = Vec::new();
         for field in fields {
-            for &hash in hashes {
-                for &log_n in &sizes {
-                    for &threads in threads {
-                        let case = Case {
-                            field,
-                            hash,
-                            log_n,
-                            threads,
-                        };
-                        case.params()?;
-                        cases.push(case);
-                    }
+            for &log_n in &sizes {
+                for &threads in threads {
+                    let case = Case {
+                        field,
+                        log_n,
+                        threads,
+                    };
+                    case.params()?;
+                    cases.push(case);
                 }
             }
         }

@@ -6,14 +6,13 @@ use brakefri_core::{
 };
 use brakefri_primitives::{
     fields::CanonicalField,
-    hash::{Blake3Suite, HashSuite, KeccakSuite, Sha256Suite},
     transcript::{F128Profile, FieldProfile, GoldilocksProfile},
 };
 use brakefri_runtime::ExecutionContext;
 
 use crate::{
     Result,
-    config::{Case, Hash, Settings},
+    config::{Case, Settings},
     output::{self, VerifiedTrial},
     resources::{self, Available, Estimate},
 };
@@ -42,38 +41,40 @@ impl Fixture {
 }
 
 pub fn run(case: &Case, settings: &Settings) -> Result<()> {
-    resources::admit(&Estimate::new(case)?, settings, &Available::detect())?;
+    let params = case.params()?;
+    let estimate = Estimate::new(case)?;
+    resources::admit(&estimate, settings, &Available::detect())?;
     match case.field {
-        Profile::GoldilocksQuadratic => dispatch::<GoldilocksProfile>(case, settings),
-        Profile::F128Base => dispatch::<F128Profile>(case, settings),
+        Profile::GoldilocksQuadratic => {
+            run_generic::<GoldilocksProfile>(case, settings, &params, &estimate)
+        }
+        Profile::F128Base => run_generic::<F128Profile>(case, settings, &params, &estimate),
     }
 }
-fn dispatch<P: FieldProfile>(case: &Case, settings: &Settings) -> Result<()> {
-    match case.hash {
-        Hash::Keccak256 => run_generic::<P, _>(case, settings, KeccakSuite),
-        Hash::Sha256 => run_generic::<P, _>(case, settings, Sha256Suite),
-        Hash::Blake3 => run_generic::<P, _>(case, settings, Blake3Suite),
-    }
-}
-fn run_generic<P: FieldProfile, S: HashSuite>(
+fn run_generic<P: FieldProfile>(
     case: &Case,
     settings: &Settings,
-    suite: S,
+    params: &BrakeParams,
+    estimate: &Estimate,
 ) -> Result<()> {
     let execution = ExecutionContext::new(case.threads)?;
     let mut csv = output::open_csv(&output::csv_path(case, &settings.output))?;
-    output::metadata(case, settings)?;
+    eprintln!(
+        "START {} seed={} repetitions={}",
+        case.label(),
+        settings.seed,
+        settings.repetitions
+    );
     let mut points = Fixture(settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64);
     for repetition in 0..settings.repetitions {
-        resources::admit(&Estimate::new(case)?, settings, &Available::detect())?;
+        resources::admit(estimate, settings, &Available::detect())?;
         // Same polynomial across repetitions, suites and thread counts. Fresh allocation
         // is consumed by each measured commit, and drops before the next trial.
         let mut fixture = Fixture(settings.seed ^ case.log_n as u64);
-        let params = BrakeParams::new(P::PROFILE, case.log_n)?;
         let mut coefficients = Vec::new();
         coefficients.try_reserve_exact(params.n())?;
         coefficients.extend((0..params.n()).map(|_| fixture.field::<P::Base>()));
-        let pcs = BrakeFri::<P, S>::new(params, suite.clone())?;
+        let pcs = BrakeFri::<P>::new(params.clone())?;
         let start = Instant::now();
         let (commitment, state) = pcs.commit(coefficients, &execution)?;
         let commit_bytes = encode_commitment(&commitment);
@@ -101,16 +102,13 @@ fn run_generic<P: FieldProfile, S: HashSuite>(
             verify_time,
             proof_size,
         };
-        output::append_trial(&mut csv, case, &trial)?;
-        output::log(
-            &settings.output,
-            &format!(
-                "VERIFIED {} repetition={} proof_size={}",
-                case.label(),
-                repetition + 1,
-                proof_size
-            ),
-        )?;
+        output::append_trial(&mut csv, params, case.threads, &trial)?;
+        eprintln!(
+            "VERIFIED {} repetition={} proof_size={}",
+            case.label(),
+            repetition + 1,
+            proof_size
+        );
     }
     Ok(())
 }
@@ -124,9 +122,8 @@ mod tests {
         let mut fixture = Fixture(0);
         assert_eq!(fixture.word(), 0xe220a8397b1dcdaf);
         let execution = ExecutionContext::new(1).unwrap();
-        let pcs = BrakeFri::<GoldilocksProfile, _>::new(
+        let pcs = BrakeFri::<GoldilocksProfile>::new(
             BrakeParams::new(Profile::GoldilocksQuadratic, 11).unwrap(),
-            Blake3Suite,
         )
         .unwrap();
         let coefficients: Vec<_> = (0..2048).map(|_| fixture.field::<Goldilocks>()).collect();

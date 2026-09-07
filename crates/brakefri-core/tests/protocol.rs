@@ -1,16 +1,13 @@
 use brakefri_core::{BrakeFri, BrakeParams, PcsError};
-use brakefri_primitives::{
-    hash::{Blake3Suite, HashSuite, KeccakSuite, Sha256Suite},
-    transcript::{F128Profile, FieldProfile, GoldilocksProfile},
-};
+use brakefri_primitives::transcript::{F128Profile, FieldProfile, GoldilocksProfile};
 use brakefri_runtime::ExecutionContext;
 use p3_field::PrimeCharacteristicRing;
 
-fn cases<P: FieldProfile, S: HashSuite>(suite: S) {
+fn cases<P: FieldProfile>() {
     let execution = ExecutionContext::new(2).unwrap();
     for log_n in [11, 12, 14] {
         let params = BrakeParams::new(P::PROFILE, log_n).unwrap();
-        let pcs = BrakeFri::<P, S>::new(params.clone(), suite.clone()).unwrap();
+        let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
         for kind in 0..4 {
             let mut coefficients = vec![P::Base::ZERO; params.n()];
             match kind {
@@ -80,11 +77,8 @@ fn cases<P: FieldProfile, S: HashSuite>(suite: S) {
                 }
             }
             // Opening at two points does not change retained commitment state.
-            let different = BrakeFri::<P, S>::new(
-                BrakeParams::new(P::PROFILE, log_n + 1).unwrap(),
-                suite.clone(),
-            )
-            .unwrap();
+            let different =
+                BrakeFri::<P>::new(BrakeParams::new(P::PROFILE, log_n + 1).unwrap()).unwrap();
             assert!(matches!(
                 different.prove(&state, P::Base::ZERO, &execution),
                 Err(PcsError::StateMismatch)
@@ -106,19 +100,15 @@ fn cases<P: FieldProfile, S: HashSuite>(suite: S) {
 }
 
 #[test]
-fn honest_polynomials_both_profiles_all_suites() {
-    cases::<GoldilocksProfile, _>(KeccakSuite);
-    cases::<F128Profile, _>(KeccakSuite);
-    cases::<GoldilocksProfile, _>(Sha256Suite);
-    cases::<F128Profile, _>(Sha256Suite);
-    cases::<GoldilocksProfile, _>(Blake3Suite);
-    cases::<F128Profile, _>(Blake3Suite);
+fn honest_polynomials_both_profiles() {
+    cases::<GoldilocksProfile>();
+    cases::<F128Profile>();
 }
 
-fn malformed<P: FieldProfile, S: HashSuite>(suite: S) {
+fn malformed<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = BrakeParams::new(P::PROFILE, 13).unwrap();
-    let pcs = BrakeFri::<P, S>::new(params.clone(), suite.clone()).unwrap();
+    let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let coefficients = (0..params.n())
         .map(|i| P::Base::from_usize(i + 1))
         .collect();
@@ -197,8 +187,7 @@ fn malformed<P: FieldProfile, S: HashSuite>(suite: S) {
         pcs.verify(&wrong_commitment, z, opening.y, &opening.proof, &execution)
             .is_err()
     );
-    let other_size =
-        BrakeFri::<P, S>::new(BrakeParams::new(P::PROFILE, 14).unwrap(), suite).unwrap();
+    let other_size = BrakeFri::<P>::new(BrakeParams::new(P::PROFILE, 14).unwrap()).unwrap();
     assert!(
         other_size
             .verify(&commitment, z, opening.y, &opening.proof, &execution)
@@ -208,36 +197,32 @@ fn malformed<P: FieldProfile, S: HashSuite>(suite: S) {
 
 #[test]
 fn malformed_shapes_algebra_and_statement_binding() {
-    malformed::<GoldilocksProfile, _>(KeccakSuite);
-    malformed::<F128Profile, _>(KeccakSuite);
-    malformed::<GoldilocksProfile, _>(Sha256Suite);
-    malformed::<F128Profile, _>(Sha256Suite);
-    malformed::<GoldilocksProfile, _>(Blake3Suite);
-    malformed::<F128Profile, _>(Blake3Suite);
+    malformed::<GoldilocksProfile>();
+    malformed::<F128Profile>();
 }
 
 #[test]
-fn trusted_profile_and_suite_binding() {
+fn trusted_profile_and_parameter_binding() {
     use brakefri_primitives::fields::Goldilocks as F;
     let execution = ExecutionContext::new(1).unwrap();
     let params = BrakeParams::new(GoldilocksProfile::PROFILE, 12).unwrap();
     assert!(matches!(
-        BrakeFri::<F128Profile, _>::new(params.clone(), Blake3Suite),
+        BrakeFri::<F128Profile>::new(params.clone()),
         Err(PcsError::ProfileMismatch)
     ));
-    let pcs = BrakeFri::<GoldilocksProfile, _>::new(params.clone(), Blake3Suite).unwrap();
+    let pcs = BrakeFri::<GoldilocksProfile>::new(params.clone()).unwrap();
     let (commitment, state) = pcs
         .commit((0..params.n()).map(F::from_usize).collect(), &execution)
         .unwrap();
     let opening = pcs.prove(&state, F::TWO, &execution).unwrap();
-    let sha = BrakeFri::<GoldilocksProfile, _>::new(params.clone(), Sha256Suite).unwrap();
-    let keccak = BrakeFri::<GoldilocksProfile, _>::new(params, KeccakSuite).unwrap();
+    pcs.verify(&commitment, F::TWO, opening.y, &opening.proof, &execution)
+        .unwrap();
+    let other_size = BrakeFri::<GoldilocksProfile>::new(
+        BrakeParams::new(GoldilocksProfile::PROFILE, 14).unwrap(),
+    )
+    .unwrap();
     assert!(
-        sha.verify(&commitment, F::TWO, opening.y, &opening.proof, &execution)
-            .is_err()
-    );
-    assert!(
-        keccak
+        other_size
             .verify(&commitment, F::TWO, opening.y, &opening.proof, &execution)
             .is_err()
     );

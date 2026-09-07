@@ -3,7 +3,7 @@ use std::{fmt, marker::PhantomData};
 
 use brakefri_primitives::{
     fields::CanonicalField,
-    hash::{Digest, HashSuite},
+    hash::Digest,
     mmcs::{MatrixOpening, MultiProof},
     transcript::FieldProfile,
 };
@@ -120,7 +120,7 @@ pub enum VerifyEncodedError {
     SizeOverflow,
 }
 
-impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
+impl<P: FieldProfile> BrakeFri<P> {
     /// Decode and verify the two actual transport buffers, returning their checked
     /// total byte length only after success. Call inside the verification timer.
     /// The expected root and intended (z, y) must come from the caller's statement.

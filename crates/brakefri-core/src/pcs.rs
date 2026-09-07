@@ -1,7 +1,7 @@
 //! Standalone coefficient-input Section 3 PCS. Proofs contain only protocol messages.
 use brakefri_primitives::{
     dft::{DftError, NaturalOrderDft, padded_coefficient_blocks},
-    hash::{Digest, HashSuite},
+    hash::Digest,
     mmcs::{CanonicalMmcs, LeafKind, MatrixOpening, MatrixProverData, MmcsError, MultiProof},
     transcript::{FieldProfile, Transcript, TranscriptError},
 };
@@ -53,15 +53,14 @@ pub struct Opening<P: FieldProfile> {
 
 /// Immutable commitment state, reusable for arbitrary subsequent evaluation points.
 /// The MMCS owns the only retained encoding; coefficients are moved here by commit.
-pub struct ProverData<P: FieldProfile, S: HashSuite> {
+pub struct ProverData<P: FieldProfile> {
     params: BrakeParams,
-    suite_id: &'static str,
     coefficients: Vec<P::Base>,
-    initial: MatrixProverData<P::Base, S>,
+    initial: MatrixProverData<P::Base>,
     commitment: Commitment,
 }
 
-impl<P: FieldProfile, S: HashSuite> ProverData<P, S> {
+impl<P: FieldProfile> ProverData<P> {
     pub fn commitment(&self) -> Commitment {
         self.commitment
     }
@@ -93,25 +92,23 @@ pub enum PcsError {
     Transcript(#[from] TranscriptError),
 }
 
-/// Trusted configuration. Hash selection is generic and never proof-controlled.
-pub struct BrakeFri<P: FieldProfile, S: HashSuite> {
+/// Trusted configuration. Hashing is fixed to Blake3 and never proof-controlled.
+pub struct BrakeFri<P: FieldProfile> {
     params: BrakeParams,
-    suite: S,
     dft: NaturalOrderDft<P::Base>,
-    initial_mmcs: CanonicalMmcs<P::Base, S>,
-    scalar_mmcs: CanonicalMmcs<P::Challenge, S>,
+    initial_mmcs: CanonicalMmcs<P::Base>,
+    scalar_mmcs: CanonicalMmcs<P::Challenge>,
 }
 
-impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
-    pub fn new(params: BrakeParams, suite: S) -> Result<Self, PcsError> {
+impl<P: FieldProfile> BrakeFri<P> {
+    pub fn new(params: BrakeParams) -> Result<Self, PcsError> {
         if params.profile() != P::PROFILE {
             return Err(PcsError::ProfileMismatch);
         }
         Ok(Self {
-            initial_mmcs: CanonicalMmcs::new(suite.clone(), LeafKind::Base, M)?,
-            scalar_mmcs: CanonicalMmcs::new(suite.clone(), LeafKind::Challenge, 1)?,
+            initial_mmcs: CanonicalMmcs::new(LeafKind::Base, M)?,
+            scalar_mmcs: CanonicalMmcs::new(LeafKind::Challenge, 1)?,
             params,
-            suite,
             dft: NaturalOrderDft::default(),
         })
     }
@@ -124,7 +121,7 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
         &self,
         coefficients: Vec<P::Base>,
         execution: &ExecutionContext,
-    ) -> Result<(Commitment, ProverData<P, S>), PcsError> {
+    ) -> Result<(Commitment, ProverData<P>), PcsError> {
         if coefficients.len() != self.params.n() {
             return Err(PcsError::CoefficientCount {
                 expected: self.params.n(),
@@ -144,7 +141,6 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
             commitment,
             ProverData {
                 params: self.params.clone(),
-                suite_id: S::ID,
                 coefficients,
                 initial,
                 commitment,
@@ -154,11 +150,11 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
 
     pub fn prove(
         &self,
-        state: &ProverData<P, S>,
+        state: &ProverData<P>,
         z: P::Base,
         execution: &ExecutionContext,
     ) -> Result<Opening<P>, PcsError> {
-        if state.params != self.params || state.suite_id != S::ID {
+        if state.params != self.params {
             return Err(PcsError::StateMismatch);
         }
         let blocks: Vec<_> = state
@@ -192,7 +188,7 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
                 .map(|row| combine::<P>(row, &weights))
                 .collect::<Vec<_>>(),
         );
-        let mut layers: Vec<MatrixProverData<P::Challenge, S>> =
+        let mut layers: Vec<MatrixProverData<P::Challenge>> =
             Vec::with_capacity(self.params.rounds());
         let mut rounds = Vec::with_capacity(self.params.rounds());
         let mut point = z;
@@ -425,8 +421,8 @@ impl<P: FieldProfile, S: HashSuite> BrakeFri<P, S> {
         z: P::Base,
         y: P::Base,
         blocks: &[P::Base],
-    ) -> Result<Transcript<P, S>, PcsError> {
-        let mut transcript = Transcript::new(self.params.log_n(), &self.suite)?;
+    ) -> Result<Transcript<P>, PcsError> {
+        let mut transcript = Transcript::new(self.params.log_n())?;
         transcript.observe_statement(&commitment.root, z);
         transcript.observe_claim(y);
         transcript.observe_block_values(blocks)?;

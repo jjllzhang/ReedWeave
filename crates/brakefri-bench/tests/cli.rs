@@ -23,12 +23,10 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "preflight",
             "--fields",
             "goldilocks-quadratic,f128-base",
-            "--hashes",
-            "blake3",
             "--log-n",
             "11..12",
             "--threads",
-            "1,3",
+            "1,32",
         ],
     );
     assert!(
@@ -47,12 +45,10 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "sweep",
             "--fields",
             "goldilocks-quadratic,f128-base",
-            "--hashes",
-            "blake3",
             "--log-n",
             "11",
             "--threads",
-            "3",
+            "1,32",
             "--repetitions",
             "2",
         ],
@@ -62,14 +58,20 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
         "{}",
         String::from_utf8_lossy(&sweep.stderr)
     );
+    assert_eq!(directory.path().read_dir().unwrap().count(), 1);
+    assert_eq!(
+        directory.path().join("blake3").read_dir().unwrap().count(),
+        2
+    );
     for field in ["goldilocks_quadratic", "f128_base"] {
         let text =
             std::fs::read_to_string(directory.path().join(format!("blake3/{field}.csv"))).unwrap();
-        assert_eq!(text.lines().count(), 3);
-        for row in text.lines().skip(1) {
+        assert_eq!(text.lines().count(), 5);
+        for (index, row) in text.lines().skip(1).enumerate() {
             let columns: Vec<_> = row.split(',').collect();
             assert_eq!(columns.len(), 9);
-            assert_eq!(&columns[..5], ["11", "1024", "2", "0.5", "3"]);
+            let threads = if index < 2 { "1" } else { "32" };
+            assert_eq!(&columns[..5], ["11", "1024", "2", "0.5", threads]);
             assert!(
                 columns[5..8]
                     .iter()
@@ -86,8 +88,6 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "run",
             "--field",
             "f128-base",
-            "--hash",
-            "blake3",
             "--log-n",
             "11",
             "--threads",
@@ -105,8 +105,6 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "run",
             "--field",
             "f128-base",
-            "--hash",
-            "blake3",
             "--log-n",
             "30",
             "--threads",
@@ -117,9 +115,6 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
     );
     assert!(!rejected.status.success());
     assert!(!limited.path().join("blake3/f128_base.csv").exists());
-    assert!(
-        std::fs::read_to_string(limited.path().join("run.log"))
-            .unwrap()
-            .contains("unmeasured")
-    );
+    assert_eq!(limited.path().read_dir().unwrap().count(), 0);
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("unmeasured"));
 }
