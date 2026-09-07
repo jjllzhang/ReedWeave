@@ -28,7 +28,14 @@ pub struct TranscriptHash;
 
 impl CryptographicHasher<u8, Digest> for TranscriptHash {
     fn hash_iter<I: IntoIterator<Item = u8>>(&self, input: I) -> Digest {
-        let mut bytes = Vec::new();
+        let input = input.into_iter();
+        // Exact for sized iterators; other inputs can grow the buffer as needed.
+        let capacity = input
+            .size_hint()
+            .0
+            .checked_add(1)
+            .expect("hash input too long");
+        let mut bytes = Vec::with_capacity(capacity);
         bytes.push(2);
         bytes.extend(input);
         hash_bytes(&bytes)
@@ -67,7 +74,9 @@ pub(crate) struct CanonicalLeafHash<F> {
 
 impl<F: CanonicalField> CryptographicHasher<F, Digest> for CanonicalLeafHash<F> {
     fn hash_iter<I: IntoIterator<Item = F>>(&self, input: I) -> Digest {
-        let mut bytes = Vec::new();
+        // The MMCS constructor checks the coordinate bytes plus the 11-byte header.
+        let capacity = 11 + self.coordinate_count as usize * F::COORDINATE_BYTES;
+        let mut bytes = Vec::with_capacity(capacity);
         bytes.push(0);
         bytes.push(F::PROFILE_ID);
         bytes.push(self.kind as u8);

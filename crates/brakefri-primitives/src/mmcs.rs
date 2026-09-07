@@ -86,8 +86,9 @@ impl<F: CanonicalField> CanonicalMmcs<F> {
             .checked_mul(F::COORDINATE_COUNT)
             .and_then(|n| u64::try_from(n).ok())
             .ok_or(MmcsError::SizeOverflow)?;
-        width
-            .checked_mul(F::BYTE_WIDTH)
+        (coordinate_count as usize)
+            .checked_mul(F::COORDINATE_BYTES)
+            .and_then(|bytes| bytes.checked_add(11))
             .ok_or(MmcsError::SizeOverflow)?;
         let leaf = CanonicalLeafHash {
             kind,
