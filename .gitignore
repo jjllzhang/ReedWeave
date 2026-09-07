@@ -1,5 +1,10 @@
 /AGENTS.md
-/BrakeFRI.md
-/BrakeFRI_Plonky3_PCS_Implementation_Plan.md
 /target/
 /docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
