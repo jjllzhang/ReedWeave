@@ -6,6 +6,9 @@
 //! including Serde representations. Integer quotient maps reduce modulo `p`;
 //! decoding and checked canonical conversions reject out-of-range representatives.
 
+mod extension;
+pub use extension::F128Quadratic;
+
 use core::cmp::Ordering;
 use core::fmt::{self, Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
