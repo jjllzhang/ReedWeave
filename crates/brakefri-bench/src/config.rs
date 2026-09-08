@@ -10,7 +10,7 @@ use crate::Result;
 #[command(
     version,
     about = "Measured coefficient-input BrakeFRI PCS trials",
-    long_about = "Measured coefficient-input BrakeFRI PCS trials. CLI values override the TOML benchmark settings; fixed protocol values are always validated. Sizes are inclusive. Only successful verified trials append numeric CSV rows. One initialized local thread pool serves all three phases. No warmups or untimed DFT cache preparation."
+    long_about = "Measured coefficient-input BrakeFRI PCS trials. CLI values override the TOML benchmark settings; fixed protocol values are always validated. Sizes are inclusive. Only successful verified trials append numeric CSV rows. One initialized local thread pool serves all three phases. Each configuration runs one complete verified warmup excluded from CSV results, then the requested measured repetitions. Every trial uses a fresh PCS/DFT instance."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -35,13 +35,13 @@ pub struct Common {
     /// Fixture seed; independent of Fiat-Shamir. Same inputs across hashes/threads.
     #[arg(long)]
     pub seed: Option<u64>,
-    /// Override repetitions for every selected size; must be positive.
+    /// Override measured repetitions after one warmup per configuration; must be positive.
     #[arg(long)]
     pub repetitions: Option<usize>,
     /// Admission limit for estimated peak MiB, not a hard RSS limit.
     #[arg(long)]
     pub max_memory_mib: Option<u64>,
-    /// Wall time limit per child case, including fixtures, setup and all repetitions.
+    /// Wall time limit per child case, including fixtures, setup, warmup and all repetitions.
     #[arg(long)]
     pub time_limit_seconds: Option<u64>,
 }
@@ -229,8 +229,8 @@ pub fn sizes(input: &str) -> Result<Vec<usize>> {
             (n, n)
         }
     };
-    if !(11..=30).contains(&start) || !(start..=30).contains(&end) {
-        return Err("sizes must be an inclusive ascending range within 11..30".into());
+    if !(14..=30).contains(&start) || !(start..=30).contains(&end) {
+        return Err("sizes must be an inclusive ascending range within 14..30".into());
     }
     Ok((start..=end).collect())
 }

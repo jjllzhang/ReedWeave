@@ -38,8 +38,8 @@ pub struct ScalarOpening<K> {
 pub struct BrakeProof<P: FieldProfile> {
     pub block_values: Vec<P::Base>,
     pub rounds: Vec<Round<P::Challenge>>,
-    pub terminal_constant: P::Challenge,
-    pub terminal_values: [P::Challenge; 2],
+    /// Ascending coefficients, padded to the public terminal degree bound.
+    pub terminal_coefficients: Vec<P::Challenge>,
     pub initial_opening: MatrixOpening<P::Base>,
     pub scalar_openings: Vec<ScalarOpening<P::Challenge>>,
 }
@@ -80,7 +80,7 @@ pub enum PcsError {
     Claim,
     #[error("round {0} scalar identity failed")]
     Scalar(usize),
-    #[error("terminal constant, values, or evaluation disagree")]
+    #[error("terminal polynomial, oracle root, or evaluation disagree")]
     Terminal,
     #[error("local fold failed at query {query}, round {round}")]
     Fold { query: usize, round: usize },
@@ -235,13 +235,15 @@ impl<P: FieldProfile> BrakeFri<P> {
             point = square;
             omega = omega.square();
         }
-        let terminal_constant = coefficients[0];
-        let last = &layers[self.params.rounds() - 1].matrix().values;
-        let terminal_values = [last[0], last[1]];
-        if terminal_values != [terminal_constant; 2] || claim != terminal_constant {
+        let terminal_coefficients = coefficients;
+        if horner(
+            terminal_coefficients.iter().copied(),
+            P::Challenge::from(point),
+        ) != claim
+        {
             return Err(PcsError::Terminal);
         }
-        transcript.observe_terminal(terminal_constant, terminal_values);
+        transcript.observe_terminal(&terminal_coefficients)?;
         let starts = transcript.sample_queries();
         let sets = query_sets(&self.params, &starts);
         let initial_opening = self
@@ -272,8 +274,7 @@ impl<P: FieldProfile> BrakeFri<P> {
             proof: BrakeProof {
                 block_values: blocks,
                 rounds,
-                terminal_constant,
-                terminal_values,
+                terminal_coefficients,
                 initial_opening,
                 scalar_openings,
             },
@@ -307,19 +308,25 @@ impl<P: FieldProfile> BrakeFri<P> {
             claim = round.even_value + gamma * round.odd_value;
             point = point.square();
         }
-        if proof.terminal_values != [proof.terminal_constant; 2] || claim != proof.terminal_constant
+        if horner(
+            proof.terminal_coefficients.iter().copied(),
+            P::Challenge::from(point),
+        ) != claim
         {
             return Err(PcsError::Terminal);
         }
-        // Reuse canonical MMCS hashing for the complete two-leaf terminal tree.
-        let (terminal_root, _) = self.scalar_mmcs.commit(
-            RowMajorMatrix::new_col(proof.terminal_values.to_vec()),
-            execution,
-        )?;
+        // Reconstruct the full terminal oracle over the same base-field subgroup.
+        let mut padded = proof.terminal_coefficients.clone();
+        padded.resize(self.params.terminal_domain_size(), P::Challenge::ZERO);
+        let terminal_word = self
+            .dft
+            .dft_extension_batch(RowMajorMatrix::new_col(padded), execution)?;
+        let (terminal_root, terminal_data) = self.scalar_mmcs.commit(terminal_word, execution)?;
+        let terminal_values = &terminal_data.matrix().values;
         if terminal_root != proof.rounds[self.params.rounds() - 1].next_oracle_root {
             return Err(PcsError::Terminal);
         }
-        transcript.observe_terminal(proof.terminal_constant, proof.terminal_values);
+        transcript.observe_terminal(&proof.terminal_coefficients)?;
         let starts = transcript.sample_queries();
         let sets = query_sets(&self.params, &starts);
         // Validate all exact counts before any large authentication work.
@@ -399,7 +406,7 @@ impl<P: FieldProfile> BrakeFri<P> {
                     + gammas[j] * (positive - negative) * (inverse_two * inverse_point);
                 let child = t % (height / 2);
                 let expected = if j + 1 == self.params.rounds() {
-                    proof.terminal_values[child]
+                    terminal_values[child]
                 } else {
                     let position = sets[j + 1]
                         .binary_search(&child)
@@ -466,6 +473,7 @@ pub(crate) fn validate_proof_shape<P: FieldProfile>(
         return Err(PcsError::ProfileMismatch);
     }
     if proof.block_values.len() != M
+        || proof.terminal_coefficients.len() != params.terminal_coefficient_count()
         || proof.rounds.len() != params.rounds()
         || proof.scalar_openings.len() != params.rounds() - 1
     {

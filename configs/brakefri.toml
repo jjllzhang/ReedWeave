@@ -1,5 +1,5 @@
 [protocol]
-m = 1024
+m = 64
 blowup = 2
 num_queries = 244
 
@@ -9,12 +9,13 @@ fields = ["goldilocks-quadratic", "f128-base"]
 log_n_min = 20
 log_n_max = 30
 threads = [1, 32]
-# Every size/thread/field/hash configuration uses the same repetition count.
+# Every configuration runs one full discarded warmup, then this many measured trials.
 repetitions = 5
 output_dir = "results"
 seed = 20260906
-# No warmups. Each trial uses a fresh DFT cache; construction is timed.
+# Warmup and measured trials use separate fresh PCS/DFT instances.
+# DFT cache construction is included in each measured commit.
 # Optional per-case admission cap (MiB); also limited to 80% of available memory.
 # max_memory_mib = 65536
-# Optional child wall time limit, including setup and every repetition.
+# Optional child wall time limit, including setup, warmup, and every repetition.
 # time_limit_seconds = 3600

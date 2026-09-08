@@ -8,7 +8,7 @@ pub use pcs::{
 };
 use thiserror::Error;
 
-pub use brakefri_primitives::{B, M, Q};
+pub use brakefri_primitives::{B, M, MIN_LOG_N, Q, TERMINAL_COEFFICIENTS};
 
 /// Validated geometry and exact interactive soundness parameters.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,9 +19,9 @@ pub struct BrakeParams {
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum ParameterError {
-    #[error("log_n must be in 11..=30")]
+    #[error("log_n must be in 14..=30")]
     UnsupportedSize,
-    #[error("m, blowup, and num_queries must be 1024, 2, and 244")]
+    #[error("m, blowup, and num_queries must be 64, 2, and 244")]
     FixedParameters,
     #[error("parameters fail exact 100-bit interactive soundness checks")]
     Soundness,
@@ -39,7 +39,7 @@ impl BrakeParams {
         blowup: usize,
         queries: usize,
     ) -> Result<Self, ParameterError> {
-        if !(11..=30).contains(&log_n) {
+        if !(MIN_LOG_N..=30).contains(&log_n) {
             return Err(ParameterError::UnsupportedSize);
         }
         if (m, blowup, queries) != (M, B, Q) {
@@ -84,19 +84,25 @@ impl BrakeParams {
         Q
     }
     pub const fn rounds(&self) -> usize {
-        self.log_n - 10
+        self.log_n - M.ilog2() as usize - TERMINAL_COEFFICIENTS.ilog2() as usize
     }
     pub const fn k(&self) -> usize {
-        1usize << self.rounds()
+        self.n() / M
     }
     pub const fn domain_size(&self) -> usize {
         B * self.k()
     }
     pub const fn log_domain_size(&self) -> usize {
-        self.rounds() + 1
+        self.domain_size().ilog2() as usize
     }
     pub const fn algebraic_numerator(&self) -> usize {
-        4 * self.k() + self.rounds() - 1
+        4 * self.k() - B * TERMINAL_COEFFICIENTS + self.rounds() + 1
+    }
+    pub const fn terminal_coefficient_count(&self) -> usize {
+        TERMINAL_COEFFICIENTS
+    }
+    pub const fn terminal_domain_size(&self) -> usize {
+        B * TERMINAL_COEFFICIENTS
     }
     pub fn layer_size(&self, round: usize) -> Option<usize> {
         (round <= self.rounds()).then(|| self.domain_size() >> round)
@@ -117,10 +123,10 @@ mod tests {
             340282366920938463463374557953744961537
         );
         for profile in [Profile::GoldilocksQuadratic, Profile::F128Base] {
-            for d in 11..=30 {
+            for d in MIN_LOG_N..=30 {
                 let p = BrakeParams::new(profile, d).unwrap();
                 assert_eq!(p.m() * p.domain_size(), 2 * p.n());
-                assert_eq!(p.layer_size(p.rounds()), Some(2));
+                assert_eq!(p.layer_size(p.rounds()), Some(256));
                 assert_eq!(p.layer_size(p.rounds() + 1), None);
                 assert!(p.log_domain_size() <= profile.two_adicity());
                 assert_eq!(p.num_queries(), 244);
@@ -132,20 +138,20 @@ mod tests {
             }
             assert_eq!(
                 BrakeParams::new(profile, 30).unwrap().algebraic_numerator(),
-                (1 << 22) + 19
+                (1 << 26) - 238
             );
         }
     }
     #[test]
     fn invalid_configuration() {
         let profile = Profile::F128Base;
-        for d in [0, 10, 31, usize::MAX] {
+        for d in [0, 10, 13, 31, usize::MAX] {
             assert!(BrakeParams::new(profile, d).is_err());
         }
         for n in [0, 1, 2047, 2049, usize::MAX] {
             assert!(BrakeParams::from_coefficient_count(profile, n).is_err());
         }
-        for (m, b, q) in [(1, 2, 244), (1024, 4, 244), (1024, 2, 243)] {
+        for (m, b, q) in [(1024, 2, 244), (64, 4, 244), (64, 2, 243)] {
             assert_eq!(
                 BrakeParams::with_fixed_values(profile, 20, m, b, q),
                 Err(ParameterError::FixedParameters)

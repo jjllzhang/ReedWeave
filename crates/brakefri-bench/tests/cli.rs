@@ -24,7 +24,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "--fields",
             "goldilocks-quadratic,f128-base",
             "--log-n",
-            "11..12",
+            "14..15",
             "--threads",
             "1,32",
         ],
@@ -46,7 +46,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "--fields",
             "goldilocks-quadratic,f128-base",
             "--log-n",
-            "11",
+            "14",
             "--threads",
             "1,32",
             "--repetitions",
@@ -58,6 +58,23 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
         "{}",
         String::from_utf8_lossy(&sweep.stderr)
     );
+    // Each child must verify one complete warmup before its two recorded trials.
+    let stderr = String::from_utf8_lossy(&sweep.stderr);
+    let progress: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.starts_with("WARMUP VERIFIED ") || line.starts_with("VERIFIED "))
+        .collect();
+    assert_eq!(progress.len(), 4 * 3);
+    for case in progress.chunks_exact(3) {
+        assert!(case[0].starts_with("WARMUP VERIFIED "));
+        assert!(case[1].contains(" repetition=1 "));
+        assert!(case[2].contains(" repetition=2 "));
+        // Resetting the point stream preserves the first measured proof.
+        assert_eq!(
+            case[0].split("proof_size=").nth(1),
+            case[1].split("proof_size=").nth(1)
+        );
+    }
     assert_eq!(directory.path().read_dir().unwrap().count(), 1);
     assert_eq!(
         directory.path().join("blake3").read_dir().unwrap().count(),
@@ -71,7 +88,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             let columns: Vec<_> = row.split(',').collect();
             assert_eq!(columns.len(), 9);
             let threads = if index < 2 { "1" } else { "32" };
-            assert_eq!(&columns[..5], ["11", "1024", "2", "0.5", threads]);
+            assert_eq!(&columns[..5], ["14", "64", "256", "0.5", threads]);
             assert!(
                 columns[5..8]
                     .iter()
@@ -89,7 +106,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             "--field",
             "f128-base",
             "--log-n",
-            "11",
+            "14",
             "--threads",
             "1",
             "--repetitions",

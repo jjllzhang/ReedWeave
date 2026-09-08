@@ -2,14 +2,14 @@
 use crate::fields::{CanonicalField, F128, Goldilocks, GoldilocksQuadratic};
 use crate::hash::{Digest, HASH_ID, TranscriptHash};
 use crate::profile::Profile;
-use crate::{B, M, Q};
+use crate::{B, M, MIN_LOG_N, Q, TERMINAL_COEFFICIENTS};
 use core::marker::PhantomData;
 use p3_challenger::{CanObserve, CanSample, HashChallenger};
 use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
 use thiserror::Error;
 
-pub const PROTOCOL_LABEL: &[u8] = b"BrakeFRI-Section3-Multiproof-v1";
-pub const ENCODING_ID: &[u8] = b"canonical-coordinates-multiproof-v1";
+pub const PROTOCOL_LABEL: &[u8] = b"BrakeFRI-Section3-Multiproof-v2";
+pub const ENCODING_ID: &[u8] = b"canonical-coordinates-multiproof-v2";
 
 mod sealed {
     pub trait Sealed {}
@@ -60,11 +60,11 @@ fn sample_base<F: CanonicalField>(source: &mut impl CanSample<u8>) -> F {
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TranscriptError {
-    #[error("log_n must be in 11..=30")]
+    #[error("log_n must be in 14..=30")]
     UnsupportedSize,
     #[error("transcript payload has the wrong shape")]
     Shape,
-    #[error("index sampling requires at most 21 bits")]
+    #[error("index sampling requires at most 25 bits")]
     IndexBits,
 }
 
@@ -72,23 +72,31 @@ pub enum TranscriptError {
 pub struct Transcript<P: FieldProfile> {
     challenger: HashChallenger<u8, TranscriptHash, 32>,
     rounds: usize,
+    log_domain_size: usize,
     marker: PhantomData<P>,
 }
 
 impl<P: FieldProfile> Transcript<P> {
     pub fn new(log_n: usize) -> Result<Self, TranscriptError> {
-        if !(11..=30).contains(&log_n) {
+        if !(MIN_LOG_N..=30).contains(&log_n) {
             return Err(TranscriptError::UnsupportedSize);
         }
         let mut result = Self {
             challenger: HashChallenger::new(Vec::new(), TranscriptHash),
-            rounds: log_n - 10,
+            rounds: log_n - M.ilog2() as usize - TERMINAL_COEFFICIENTS.ilog2() as usize,
+            log_domain_size: log_n - M.ilog2() as usize + B.ilog2() as usize,
             marker: PhantomData,
         };
         let mut context = Vec::new();
         append_string(&mut context, PROTOCOL_LABEL);
         context.push(P::PROFILE.id());
-        for value in [log_n as u64, M as u64, B as u64, Q as u64] {
+        for value in [
+            log_n as u64,
+            M as u64,
+            B as u64,
+            Q as u64,
+            TERMINAL_COEFFICIENTS as u64,
+        ] {
             context.extend(value.to_le_bytes());
         }
         append_string(&mut context, HASH_ID.as_bytes());
@@ -150,12 +158,19 @@ impl<P: FieldProfile> Transcript<P> {
         self.event(6, &payload);
         Ok(())
     }
-    pub fn observe_terminal(&mut self, constant: P::Challenge, values: [P::Challenge; 2]) {
-        let mut payload = Vec::with_capacity(48);
-        for value in [constant, values[0], values[1]] {
+    pub fn observe_terminal(
+        &mut self,
+        coefficients: &[P::Challenge],
+    ) -> Result<(), TranscriptError> {
+        if coefficients.len() != TERMINAL_COEFFICIENTS {
+            return Err(TranscriptError::Shape);
+        }
+        let mut payload = (coefficients.len() as u64).to_le_bytes().to_vec();
+        for value in coefficients {
             payload.extend(value.to_canonical_bytes());
         }
         self.event(7, &payload);
+        Ok(())
     }
     pub fn sample_challenge(&mut self) -> P::Challenge {
         P::sample_challenge(&mut self.challenger)
@@ -167,7 +182,7 @@ impl<P: FieldProfile> Transcript<P> {
     pub fn sample_queries(&mut self) -> Vec<usize> {
         (0..Q)
             .map(|_| {
-                self.sample_index(self.rounds + 1)
+                self.sample_index(self.log_domain_size)
                     .expect("validated domain")
             })
             .collect()
@@ -178,7 +193,7 @@ fn append_string(out: &mut Vec<u8>, value: &[u8]) {
     out.extend(value);
 }
 fn sample_index(source: &mut impl CanSample<u8>, bits: usize) -> Result<usize, TranscriptError> {
-    if bits > 21 {
+    if bits > 25 {
         return Err(TranscriptError::IndexBits);
     }
     let mut value = 0usize;
@@ -238,15 +253,17 @@ mod tests {
         assert_eq!(sample_index(&mut bytes, 1), Ok(1));
         assert_eq!(sample_index(&mut bytes, 1), Ok(1));
         assert!(bytes.0.is_empty());
-        assert!(sample_index(&mut bytes, 22).is_err());
+        let mut bytes = Bytes([0xff; 4].into());
+        assert_eq!(sample_index(&mut bytes, 25), Ok((1 << 25) - 1));
+        assert!(sample_index(&mut bytes, 26).is_err());
     }
     #[test]
     fn context_and_upstream_byte_order() {
-        let mut t = Transcript::<GoldilocksProfile>::new(11).unwrap();
+        let mut t = Transcript::<GoldilocksProfile>::new(14).unwrap();
         let mut context = Vec::new();
         append_string(&mut context, PROTOCOL_LABEL);
         context.push(1);
-        for x in [11u64, 1024, 2, 244] {
+        for x in [14u64, 64, 2, 244, 128] {
             context.extend(x.to_le_bytes());
         }
         append_string(&mut context, b"blake3");
@@ -262,12 +279,12 @@ mod tests {
         // After exhaustion the digest is chained in natural array order.
         let next = Blake3.hash_slice(&[2].into_iter().chain(digest).collect::<Vec<_>>());
         assert_eq!(t.challenger.sample(), next[31]);
-        let mut a = Transcript::<GoldilocksProfile>::new(11).unwrap();
-        let mut b = Transcript::<GoldilocksProfile>::new(12).unwrap();
+        let mut a = Transcript::<GoldilocksProfile>::new(14).unwrap();
+        let mut b = Transcript::<GoldilocksProfile>::new(15).unwrap();
         assert_ne!(a.sample_challenge(), b.sample_challenge());
     }
     fn replay_all_events<P: FieldProfile>() {
-        let mut transcript = Transcript::<P>::new(12).unwrap();
+        let mut transcript = Transcript::<P>::new(15).unwrap();
         let mut reference = HashChallenger::new(Vec::new(), TranscriptHash);
         fn observe<H: CryptographicHasher<u8, Digest>>(
             reference: &mut HashChallenger<u8, H, 32>,
@@ -285,7 +302,7 @@ mod tests {
         let mut context = Vec::new();
         append_string(&mut context, PROTOCOL_LABEL);
         context.push(P::PROFILE.id());
-        for value in [12u64, 1024, 2, 244] {
+        for value in [15u64, 64, 2, 244, 128] {
             context.extend(value.to_le_bytes());
         }
         append_string(&mut context, HASH_ID.as_bytes());
@@ -306,18 +323,18 @@ mod tests {
             3,
             P::Base::ONE.to_canonical_bytes().into_iter().collect(),
         );
-        let blocks: Vec<_> = (0..1024).map(P::Base::from_usize).collect();
+        let blocks: Vec<_> = (0..M).map(P::Base::from_usize).collect();
         transcript.observe_block_values(&blocks).unwrap();
         observe(
             &mut reference,
             4,
-            1024u64
+            (M as u64)
                 .to_le_bytes()
                 .into_iter()
                 .chain(blocks.iter().flat_map(CanonicalField::to_canonical_bytes))
                 .collect(),
         );
-        for _ in 0..1024 {
+        for _ in 0..M {
             assert_eq!(
                 transcript.sample_challenge(),
                 P::sample_challenge(&mut reference)
@@ -348,17 +365,25 @@ mod tests {
                 (j as u64).to_le_bytes().into_iter().chain(root).collect(),
             );
         }
-        transcript.observe_terminal(P::Challenge::ONE, [P::Challenge::TWO, P::Challenge::ZERO]);
+        let coefficients: Vec<_> = (0..TERMINAL_COEFFICIENTS)
+            .map(P::Challenge::from_usize)
+            .collect();
+        transcript.observe_terminal(&coefficients).unwrap();
         observe(
             &mut reference,
             7,
-            [P::Challenge::ONE, P::Challenge::TWO, P::Challenge::ZERO]
-                .iter()
-                .flat_map(CanonicalField::to_canonical_bytes)
+            (TERMINAL_COEFFICIENTS as u64)
+                .to_le_bytes()
+                .into_iter()
+                .chain(
+                    coefficients
+                        .iter()
+                        .flat_map(CanonicalField::to_canonical_bytes),
+                )
                 .collect(),
         );
         let expected: Vec<_> = (0..244)
-            .map(|_| sample_index(&mut reference, 3).unwrap())
+            .map(|_| sample_index(&mut reference, 10).unwrap())
             .collect();
         assert_eq!(transcript.sample_queries(), expected);
     }
@@ -369,7 +394,7 @@ mod tests {
     }
     #[test]
     fn events_bind_statement_both_scalars_roots_and_terminal() {
-        let t = Transcript::<GoldilocksProfile>::new(11).unwrap();
+        let t = Transcript::<GoldilocksProfile>::new(14).unwrap();
         let root = [3; 32];
         let sample = |mut x: Transcript<GoldilocksProfile>| x.sample_challenge();
         let mut a = t.clone();
@@ -383,11 +408,9 @@ mod tests {
         b.observe_claim(Goldilocks::TWO);
         assert_ne!(sample(a), sample(b));
         let mut a = t.clone();
-        a.observe_block_values(&vec![Goldilocks::ONE; 1024])
-            .unwrap();
+        a.observe_block_values(&vec![Goldilocks::ONE; M]).unwrap();
         let mut b = t.clone();
-        b.observe_block_values(&vec![Goldilocks::TWO; 1024])
-            .unwrap();
+        b.observe_block_values(&vec![Goldilocks::TWO; M]).unwrap();
         assert_ne!(sample(a), sample(b));
         for (aa, bb) in [
             (GoldilocksQuadratic::TWO, GoldilocksQuadratic::ONE),
@@ -406,9 +429,13 @@ mod tests {
         b.observe_round_root(0, &[4; 32]).unwrap();
         assert_ne!(sample(a), sample(b));
         let mut a = t.clone();
-        a.observe_terminal(GoldilocksQuadratic::ONE, [GoldilocksQuadratic::ONE; 2]);
+        let coefficients = vec![GoldilocksQuadratic::ONE; TERMINAL_COEFFICIENTS];
+        a.observe_terminal(&coefficients).unwrap();
         let mut b = t.clone();
-        b.observe_terminal(GoldilocksQuadratic::TWO, [GoldilocksQuadratic::ONE; 2]);
+        let mut changed = coefficients;
+        changed[TERMINAL_COEFFICIENTS - 1] += GoldilocksQuadratic::ONE;
+        b.observe_terminal(&changed).unwrap();
+        assert!(b.observe_terminal(&[]).is_err());
         assert_ne!(a.sample_queries(), b.sample_queries());
         assert_eq!(a.sample_queries().len(), 244);
         assert!(a.observe_block_values(&[]).is_err());

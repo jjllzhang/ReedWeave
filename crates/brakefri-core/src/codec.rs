@@ -66,8 +66,7 @@ pub fn encode_eval_proof<P: FieldProfile>(
     let wire = WireProof {
         block_values: Fields(&proof.block_values),
         rounds: proof.rounds.iter().map(WireRound::from).collect(),
-        terminal_constant: Coordinate(proof.terminal_constant),
-        terminal_values: proof.terminal_values.map(Coordinate),
+        terminal_coefficients: Fields(&proof.terminal_coefficients),
         initial_opening: WireInitial {
             rows: Rows(&proof.initial_opening.rows),
             boundary_digests: &proof.initial_opening.proof.sibling_hashes,
@@ -222,8 +221,7 @@ impl<F: CanonicalField> Serialize for Rows<'_, F> {
 struct WireProof<'a, F, K> {
     block_values: Fields<'a, F>,
     rounds: Vec<WireRound<K>>,
-    terminal_constant: Coordinate<K>,
-    terminal_values: [Coordinate<K>; 2],
+    terminal_coefficients: Fields<'a, K>,
     initial_opening: WireInitial<'a, F>,
     scalar_openings: Vec<WireScalar<'a, K>>,
 }
@@ -378,7 +376,7 @@ struct ProofSeed<'a, P>(&'a BrakeParams, PhantomData<P>);
 impl<'de, P: FieldProfile> DeserializeSeed<'de> for ProofSeed<'_, P> {
     type Value = BrakeProof<P>;
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        d.deserialize_tuple(6, self)
+        d.deserialize_tuple(5, self)
     }
 }
 impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
@@ -404,8 +402,13 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
             next_oracle_root: round.next_oracle_root,
         })
         .collect();
-        let terminal_constant = next::<_, Coordinate<P::Challenge>>(&mut seq)?.0;
-        let terminal_values = next::<_, [Coordinate<P::Challenge>; 2]>(&mut seq)?.map(|v| v.0);
+        let terminal_coefficients = seeded(
+            &mut seq,
+            fields::<P::Challenge>(
+                params.terminal_coefficient_count(),
+                params.terminal_coefficient_count(),
+            ),
+        )?;
         let (max, depth) = opening_bounds(params, 0).map_err(A::Error::custom)?;
         let (rows, proof) = seeded(
             &mut seq,
@@ -418,7 +421,7 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
                 depth,
             },
         )?;
-        // Validated parameters bound the layer index to 1..ell here. Precompute
+        // Validated parameters bound the layer index to 1..t here. Precompute
         // all geometry with checked arithmetic before visiting the suffix.
         let bounds = (1..params.rounds())
             .map(|j| opening_bounds(params, j))
@@ -441,8 +444,7 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
         Ok(BrakeProof {
             block_values,
             rounds,
-            terminal_constant,
-            terminal_values,
+            terminal_coefficients,
             initial_opening: MatrixOpening { rows, proof },
             scalar_openings,
         })

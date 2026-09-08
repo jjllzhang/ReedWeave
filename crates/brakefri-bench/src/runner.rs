@@ -60,16 +60,19 @@ fn run_generic<P: FieldProfile>(
     let execution = ExecutionContext::new(case.threads)?;
     let mut csv = output::open_csv(&output::csv_path(case, &settings.output))?;
     eprintln!(
-        "START {} seed={} repetitions={}",
+        "START {} seed={} warmups=1 repetitions={}",
         case.label(),
         settings.seed,
         settings.repetitions
     );
-    let mut points = Fixture(settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64);
-    for repetition in 0..settings.repetitions {
+    let point_seed = settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64;
+    let mut points = Fixture(point_seed);
+    // Iteration zero executes the complete pipeline as a discarded warmup.
+    // Every iteration owns a fresh PCS/DFT instance and releases it on exit.
+    for repetition in 0..=settings.repetitions {
         resources::admit(estimate, settings, &Available::detect())?;
         // Same polynomial across repetitions, suites and thread counts. Fresh allocation
-        // is consumed by each measured commit, and drops before the next trial.
+        // is consumed by each commit, and drops before the next trial.
         let mut fixture = Fixture(settings.seed ^ case.log_n as u64);
         let mut coefficients = Vec::new();
         coefficients.try_reserve_exact(params.n())?;
@@ -96,6 +99,12 @@ fn run_generic<P: FieldProfile>(
             &execution,
         )?;
         let verify_time = start.elapsed().as_secs_f64();
+        if repetition == 0 {
+            eprintln!("WARMUP VERIFIED {} proof_size={}", case.label(), proof_size);
+            // Preserve the formal trials' original deterministic point sequence.
+            points = Fixture(point_seed);
+            continue;
+        }
         let trial = VerifiedTrial {
             commit_time,
             prove_time,
@@ -106,7 +115,7 @@ fn run_generic<P: FieldProfile>(
         eprintln!(
             "VERIFIED {} repetition={} proof_size={}",
             case.label(),
-            repetition + 1,
+            repetition,
             proof_size
         );
     }
@@ -123,10 +132,12 @@ mod tests {
         assert_eq!(fixture.word(), 0xe220a8397b1dcdaf);
         let execution = ExecutionContext::new(1).unwrap();
         let pcs = BrakeFri::<GoldilocksProfile>::new(
-            BrakeParams::new(Profile::GoldilocksQuadratic, 11).unwrap(),
+            BrakeParams::new(Profile::GoldilocksQuadratic, 14).unwrap(),
         )
         .unwrap();
-        let coefficients: Vec<_> = (0..2048).map(|_| fixture.field::<Goldilocks>()).collect();
+        let coefficients: Vec<_> = (0..pcs.params().n())
+            .map(|_| fixture.field::<Goldilocks>())
+            .collect();
         let (commitment, state) = pcs.commit(coefficients, &execution).unwrap();
         let bytes = encode_commitment(&commitment);
         for _ in 0..2 {

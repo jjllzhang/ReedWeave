@@ -26,7 +26,9 @@ impl Estimate {
         let coefficients = n * base;
         let matrix = B as u64 * coefficients;
         // Initial binary tree plus all successively halved scalar trees.
-        let trees = (4 * domain - params.rounds() as u64 - 5) * 32;
+        let trees =
+            (4 * domain - 2 * params.terminal_domain_size() as u64 - params.rounds() as u64 - 1)
+                * 32;
         // Conservatively allow a full normalization buffer, twiddles, combined/folded
         // challenge buffers, simultaneous typed/wire/decoded proofs, and worker stacks.
         let scratch = matrix
@@ -34,7 +36,8 @@ impl Estimate {
             + 8 * domain * 16
             + 6 * (2 * Q as u64 * M as u64 * base
                 + 2 * Q as u64 * params.rounds() as u64 * 16
-                + 2 * Q as u64 * params.rounds() as u64 * params.rounds() as u64 * 32);
+                + params.terminal_coefficient_count() as u64 * 16
+                + 2 * Q as u64 * params.rounds() as u64 * params.log_domain_size() as u64 * 32);
         let scratch = scratch
             .checked_add(
                 (case.threads as u64)

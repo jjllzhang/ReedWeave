@@ -79,7 +79,7 @@ fn cli_lists_ranges_and_checked_config_overrides() {
     assert!(zero.params().is_err());
     let source = std::fs::read_to_string("../../configs/brakefri.toml").unwrap();
     for invalid in [
-        source.replace("m = 1024", "m = 512"),
+        source.replace("m = 64", "m = 1024"),
         source.replace("blowup = 2", "blowup = 4"),
         source.replace("num_queries = 244", "num_queries = 243"),
         source.replace("threads = [1, 32]", "threads = [0]"),
@@ -91,8 +91,7 @@ fn cli_lists_ranges_and_checked_config_overrides() {
         assert!(c.validate().is_err());
     }
     assert!(
-        toml::from_str::<Config>(&source.replace("m = 1024", "m = 1024\nunrecognized = 7"))
-            .is_err()
+        toml::from_str::<Config>(&source.replace("m = 64", "m = 64\nunrecognized = 7")).is_err()
     );
     let mut c = common(std::path::Path::new("../../configs/brakefri.toml"));
     c.repetitions = Some(0);
@@ -120,7 +119,7 @@ fn csv_exact_header_append_and_accounting() {
     assert_eq!(lines[0], output::HEADER);
     assert_eq!(
         lines[1],
-        "20,1024,1024,0.5,32,0.100000000,0.200000000,0.300000000,12345"
+        "20,64,16384,0.5,32,0.100000000,0.200000000,0.300000000,12345"
     );
     assert!(lines.iter().all(|line| line.split(',').count() == 9));
     std::fs::write(&path, "wrong,header\n").unwrap();

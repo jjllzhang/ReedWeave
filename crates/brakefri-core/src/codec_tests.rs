@@ -11,8 +11,7 @@ use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 struct ReferenceProof<B, K> {
     blocks: Vec<B>,
     rounds: Vec<(K, K, [u8; 32])>,
-    constant: K,
-    terminal: [K; 2],
+    terminal: Vec<K>,
     initial: (Vec<Vec<B>>, Vec<[u8; 32]>),
     scalars: Vec<(Vec<K>, Vec<[u8; 32]>)>,
 }
@@ -37,10 +36,11 @@ fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
             .map(|o| o.proof.sibling_hashes.len())
             .sum::<usize>();
     let payload = P::Base::BYTE_WIDTH * (M + M * u0)
-        + 16 * (2 * ell + 3 + scalar_values)
+        + 16 * (2 * ell + proof.terminal_coefficients.len() + scalar_values)
         + 32 * (1 + ell + nodes);
     let framing = varint_size(M)
         + varint_size(ell)
+        + varint_size(proof.terminal_coefficients.len())
         + varint_size(u0)
         + u0 * varint_size(M)
         + varint_size(h0)
@@ -149,19 +149,19 @@ fn roundtrip<P: FieldProfile>(log_n: usize) {
 
 #[test]
 fn actual_bytes_verify_for_every_field_and_size() {
-    roundtrip::<GoldilocksProfile>(12);
-    roundtrip::<F128Profile>(12);
+    roundtrip::<GoldilocksProfile>(15);
+    roundtrip::<F128Profile>(15);
     // Nonempty initial and scalar frontiers.
     roundtrip::<GoldilocksProfile>(18);
     roundtrip::<F128Profile>(18);
-    // ell=1 has no scalar openings, but still has a vector length of zero.
-    roundtrip::<GoldilocksProfile>(11);
-    roundtrip::<F128Profile>(11);
+    // t=1 has no scalar openings, but still has a vector length of zero.
+    roundtrip::<GoldilocksProfile>(14);
+    roundtrip::<F128Profile>(14);
 }
 
 #[test]
 fn serde_interoperability_and_protocol_only_order() {
-    let (pcs, execution, commitment, z, opening) = fixture::<GoldilocksProfile>(12);
+    let (pcs, execution, commitment, z, opening) = fixture::<GoldilocksProfile>(15);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let wire: GoldWire = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
@@ -207,19 +207,17 @@ fn serde_interoperability_and_protocol_only_order() {
     )
     .unwrap();
 
-    let (pcs, execution, commitment, z, opening) = fixture::<F128Profile>(12);
+    let (pcs, execution, commitment, z, opening) = fixture::<F128Profile>(15);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let wire: F128Wire = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
-        wire.constant.0,
-        opening.proof.terminal_constant.to_canonical_bytes()
-    );
-    assert_eq!(
-        wire.terminal.map(|c| c.0),
+        wire.terminal.iter().map(|c| c.0).collect::<Vec<_>>(),
         opening
             .proof
-            .terminal_values
-            .map(|c| c.to_canonical_bytes())
+            .terminal_coefficients
+            .iter()
+            .map(CanonicalField::to_canonical_bytes)
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         wire.initial.0,
@@ -330,8 +328,13 @@ fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layou
         );
         l.at += 32;
     }
+    l.vector(
+        params.terminal_coefficient_count(),
+        params.terminal_coefficient_count(),
+        params.terminal_coefficient_count(),
+    );
     l.fields(
-        3 * P::Challenge::COORDINATE_COUNT,
+        params.terminal_coefficient_count() * P::Challenge::COORDINATE_COUNT,
         P::Base::COORDINATE_BYTES,
     );
     let (max, depth) = opening_bounds(params, 0).unwrap();
@@ -365,7 +368,7 @@ fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layou
 }
 
 fn malformed<P: FieldProfile>() {
-    let (pcs, execution, commitment, z, opening) = fixture::<P>(12);
+    let (pcs, execution, commitment, z, opening) = fixture::<P>(15);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
     let layout = layout(pcs.params(), &opening.proof);
     assert_eq!(layout.at, bytes.len());
@@ -412,8 +415,8 @@ fn malformed<P: FieldProfile>() {
         Err(DecodeError::TrailingBytes)
     ));
     // Same numerical length M with a redundant final varint group.
-    let mut overlong = vec![0x80, 0x88, 0x00];
-    overlong.extend_from_slice(&bytes[2..]);
+    let mut overlong = vec![0xc0, 0x00];
+    overlong.extend_from_slice(&bytes[1..]);
     assert!(decode_eval_proof::<P>(pcs.params(), &overlong).is_err());
     for layer in 0..pcs.params().rounds() {
         let mut extra = opening.proof.clone();
@@ -457,7 +460,7 @@ fn malformed<P: FieldProfile>() {
         } else {
             crate::Profile::F128Base
         },
-        12,
+        15,
     )
     .unwrap();
     assert!(encode_eval_proof(&other, &opening.proof).is_err());

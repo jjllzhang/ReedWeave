@@ -156,9 +156,8 @@ fn reference<P: FieldProfile>(
         layers.push(layer);
         point = square;
     }
-    let terminal_constant = coefficients[0];
-    let terminal_values = [terminal_constant; 2];
-    transcript.observe_terminal(terminal_constant, terminal_values);
+    let terminal_coefficients = coefficients;
+    transcript.observe_terminal(&terminal_coefficients).unwrap();
     let starts = transcript.sample_queries();
     // Independent oracle-query reference: enumerate the natural domain and test
     // membership using the signed points, rather than call production query_sets.
@@ -198,8 +197,7 @@ fn reference<P: FieldProfile>(
             proof: BrakeProof {
                 block_values: blocks,
                 rounds,
-                terminal_constant,
-                terminal_values,
+                terminal_coefficients,
                 initial_opening,
                 scalar_openings,
             },
@@ -210,7 +208,7 @@ fn reference<P: FieldProfile>(
 
 fn interoperability<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(P::PROFILE, 14).unwrap();
+    let params = BrakeParams::new(P::PROFILE, 15).unwrap();
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let coefficients: Vec<_> = (0..params.n())
         .map(|i| P::Base::from_usize(i + 3))
@@ -235,12 +233,8 @@ fn interoperability<P: FieldProfile>() {
         assert_eq!(a.next_oracle_root, b.next_oracle_root);
     }
     assert_eq!(
-        production.proof.terminal_constant,
-        reference.proof.terminal_constant
-    );
-    assert_eq!(
-        production.proof.terminal_values,
-        reference.proof.terminal_values
+        production.proof.terminal_coefficients,
+        reference.proof.terminal_coefficients
     );
     assert_eq!(
         production.proof.initial_opening.rows,
@@ -261,6 +255,24 @@ fn interoperability<P: FieldProfile>() {
     }
     pcs.verify(&commitment, z, reference.y, &reference.proof, &execution)
         .unwrap();
+    assert!(
+        reference.proof.terminal_coefficients[1..]
+            .iter()
+            .any(|&c| c != P::Challenge::ZERO)
+    );
+    // At z=0 this mutation preserves the terminal scalar evaluation. It must
+    // still fail reconstruction of the complete committed terminal oracle.
+    let mut forged = reference.proof.clone();
+    forged.terminal_coefficients[127] += P::Challenge::ONE;
+    assert!(matches!(
+        pcs.verify(&commitment, z, reference.y, &forged, &execution),
+        Err(PcsError::Terminal)
+    ));
+    let (forged, _) = self::reference(&pcs, &state, z, &execution, Some(params.rounds() - 1));
+    assert!(matches!(
+        pcs.verify(&commitment, z, forged.y, &forged.proof, &execution),
+        Err(PcsError::Terminal)
+    ));
     for layer in 0..params.rounds() - 1 {
         let (forged, _) = self::reference(&pcs, &state, z, &execution, Some(layer));
         // The first inconsistent edge ends in pi_(layer+1). All earlier folds,
@@ -283,7 +295,7 @@ fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
 /// This tests the final local equality after all other verification gates pass.
 fn bad_final_fold<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(P::PROFILE, 14).unwrap();
+    let params = BrakeParams::new(P::PROFILE, 16).unwrap();
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let omega = P::Base::two_adic_generator(params.log_domain_size());
     let mut matrix = vec![P::Base::ZERO; params.domain_size() * M];
@@ -333,7 +345,12 @@ fn bad_final_fold<P: FieldProfile>() {
         });
         layers.push(layer);
     }
-    transcript.observe_terminal(P::Challenge::ZERO, [P::Challenge::ZERO; 2]);
+    transcript
+        .observe_terminal(&vec![
+            P::Challenge::ZERO;
+            params.terminal_coefficient_count()
+        ])
+        .unwrap();
     let starts = transcript.sample_queries();
     assert_eq!(starts.len(), Q);
     assert!(starts.iter().any(|&t| t < params.domain_size() / 2));
@@ -342,8 +359,7 @@ fn bad_final_fold<P: FieldProfile>() {
     let proof = BrakeProof {
         block_values: blocks,
         rounds,
-        terminal_constant: P::Challenge::ZERO,
-        terminal_values: [P::Challenge::ZERO; 2],
+        terminal_coefficients: vec![P::Challenge::ZERO; params.terminal_coefficient_count()],
         initial_opening: pcs
             .initial_mmcs
             .open_multi_batch(&sets[0], &initial)
@@ -426,10 +442,9 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
             .observe_round_root(j, &round.next_oracle_root)
             .unwrap();
     }
-    transcript.observe_terminal(
-        opening.proof.terminal_constant,
-        opening.proof.terminal_values,
-    );
+    transcript
+        .observe_terminal(&opening.proof.terminal_coefficients)
+        .unwrap();
     let sets = query_sets(&params, &transcript.sample_queries());
     // A valid multiproof for another canonical set at the same root must not
     // substitute for the verifier's transcript-derived positions.

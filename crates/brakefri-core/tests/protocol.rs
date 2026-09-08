@@ -5,7 +5,7 @@ use p3_field::PrimeCharacteristicRing;
 
 fn cases<P: FieldProfile>() {
     let execution = ExecutionContext::new(2).unwrap();
-    for log_n in [11, 12, 14] {
+    for log_n in [14, 15, 16] {
         let params = BrakeParams::new(P::PROFILE, log_n).unwrap();
         let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
         for kind in 0..4 {
@@ -63,16 +63,9 @@ fn cases<P: FieldProfile>() {
                         .is_err()
                     );
                 }
-                if log_n == 11 {
-                    assert_eq!(opening.proof.initial_opening.rows.len(), 4);
-                    assert!(
-                        opening
-                            .proof
-                            .initial_opening
-                            .proof
-                            .sibling_hashes
-                            .is_empty()
-                    );
+                assert_eq!(opening.proof.terminal_coefficients.len(), 128);
+                assert_eq!(opening.proof.rounds.len(), log_n - 13);
+                if log_n == 14 {
                     assert!(opening.proof.scalar_openings.is_empty());
                 }
             }
@@ -107,7 +100,7 @@ fn honest_polynomials_both_profiles() {
 
 fn malformed<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(P::PROFILE, 13).unwrap();
+    let params = BrakeParams::new(P::PROFILE, 16).unwrap();
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let coefficients = (0..params.n())
         .map(|i| P::Base::from_usize(i + 1))
@@ -121,7 +114,7 @@ fn malformed<P: FieldProfile>() {
                 .is_err()
         )
     };
-    for mutation in 0..25 {
+    for mutation in 0..27 {
         let mut proof = opening.proof.clone();
         match mutation {
             0 => {
@@ -136,8 +129,8 @@ fn malformed<P: FieldProfile>() {
             5 => proof.rounds[0].even_value += P::Challenge::ONE,
             6 => proof.rounds[0].odd_value += P::Challenge::ONE,
             7 => proof.rounds[0].next_oracle_root[0] ^= 1,
-            8 => proof.terminal_constant += P::Challenge::ONE,
-            9 => proof.terminal_values[0] += P::Challenge::ONE,
+            8 => proof.terminal_coefficients[0] += P::Challenge::ONE,
+            9 => proof.terminal_coefficients[127] += P::Challenge::ONE,
             10 => proof.rounds.last_mut().unwrap().next_oracle_root[0] ^= 1,
             11 => {
                 proof.initial_opening.rows[0].pop();
@@ -167,6 +160,10 @@ fn malformed<P: FieldProfile>() {
                 .scalar_openings
                 .push(proof.scalar_openings.last().unwrap().clone()),
             24 => proof.initial_opening.proof.sibling_hashes.push([0; 32]),
+            25 => {
+                proof.terminal_coefficients.pop();
+            }
+            26 => proof.terminal_coefficients.push(P::Challenge::ZERO),
             _ => unreachable!(),
         }
         reject(&proof);
@@ -205,7 +202,7 @@ fn malformed_shapes_algebra_and_statement_binding() {
 fn trusted_profile_and_parameter_binding() {
     use brakefri_primitives::fields::Goldilocks as F;
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(GoldilocksProfile::PROFILE, 12).unwrap();
+    let params = BrakeParams::new(GoldilocksProfile::PROFILE, 15).unwrap();
     assert!(matches!(
         BrakeFri::<F128Profile>::new(params.clone()),
         Err(PcsError::ProfileMismatch)
