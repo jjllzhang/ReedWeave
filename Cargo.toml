@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/brakefri-core", "crates/p3-f128-adapter", "crates/brakefri-primitives", "crates/brakefri-runtime", "crates/brakefri-bench"]
+members = ["crates/brakefri-core", "crates/p3-f128-adapter", "crates/brakefri-primitives", "crates/brakefri-runtime", "crates/brakefri-bench", "crates/plonky3-pcs-bench"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,9 @@ p3-blake3 = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c6
 p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-fri = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-stir = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
+p3-security = { git = "https://github.com/Plonky3/Plonky3", rev = "9d496524560f3c699473906c6f50fca7cf343730" }
 num-bigint = "0.5.1"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }

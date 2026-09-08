@@ -1,0 +1,28 @@
+[package]
+name = "plonky3-pcs-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+p3-field.workspace = true
+p3-goldilocks.workspace = true
+p3-f128-adapter.workspace = true
+p3-dft.workspace = true
+p3-matrix.workspace = true
+p3-symmetric.workspace = true
+p3-blake3.workspace = true
+p3-challenger.workspace = true
+p3-commit.workspace = true
+p3-merkle-tree.workspace = true
+p3-fri.workspace = true
+p3-stir.workspace = true
+p3-security.workspace = true
+brakefri-primitives.workspace = true
+brakefri-runtime.workspace = true
+num-bigint.workspace = true
+serde.workspace = true
+postcard.workspace = true
+clap = { version = "4", features = ["derive"] }
+libm = "0.2"
