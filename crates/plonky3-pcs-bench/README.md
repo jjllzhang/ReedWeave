@@ -50,7 +50,7 @@ target/release/plonky3-pcs-bench sweep \
   --log-n 20..24 --threads 1,32 --out results/plonky3-subset
 ```
 
-Shared options are `--out` (default `results/plonky3`), `--seed` (default `20260906`), `--repetitions` (default 5), `--max-memory-mib`, and `--time-limit-seconds`. Warmup count is fixed at one. Resource limits and repetition overrides must be positive. Only thread counts 1 and 32 and sizes 20 through 30 are accepted. Protocol/security settings are fixed in code; changing them requires updating the audit.
+Shared options are `--out` (default `results`), `--seed` (default `20260906`), `--repetitions` (default 5), `--max-memory-mib`, and `--time-limit-seconds`. Warmup count is fixed at one. Resource limits and repetition overrides must be positive. Only thread counts 1 and 32 and sizes 20 through 30 are accepted. Protocol/security settings are fixed in code; changing them requires updating the audit.
 
 `run` launches one child process. `sweep` launches one child per case, sequentially, and continues after failures while returning a nonzero final status if any case failed. The optional time limit covers the entire child, including fixtures, pool setup, warmup and all measured repetitions. Oversized cases are reported as unmeasured, without synthetic timings or proof sizes.
 
@@ -73,15 +73,21 @@ The public evaluation value comes from the upstream opening result and is suppli
 CSV paths are:
 
 ```text
-<out>/fri/blake3/goldilocks_extension3.csv
-<out>/fri/blake3/f128_extension2.csv
-<out>/stir/blake3/goldilocks_extension3.csv
-<out>/stir/blake3/f128_extension2.csv
+<out>/FRI/goldilocks.csv
+<out>/FRI/f128.csv
+<out>/STIR/goldilocks.csv
+<out>/STIR/f128.csv
 ```
 
-The CSV records protocol, coefficient field, extension degree, coefficient-count exponent, initial rate, per-round queries and radii, terminal size, algebraic target and bound, PoW, threads, fixture seed, repetition, three times, commitment size, opening-proof size, total size and upstream revision. Per-round vectors use semicolons within a CSV cell. For FRI, the radius column records the conservative UDR radius used for query pricing; for STIR, it records each upstream Johnson radius.
+The CSV records only the key measurements, with one row per verified trial:
 
-`proof_size = commitment_size + opening_proof_size`, in bytes. Both are the actual Postcard-encoded buffers passed through decoding and verification. The commitment root is counted once. Postcard framing is included: a single FRI root encodes to 33 bytes; STIR's one-group wrapper adds one more byte, for 34 bytes. Public `z`, `y` and configuration are excluded. This differs from BrakeFRI's raw 32-byte commitment encoding, and the difference is explicit in the separate size columns.
+```csv
+log_n,rho,threads,commit_time,prove_time,verify_time,proof_size
+```
+
+`rho` is the initial rate (`0.5`). Protocol and base field are identified by the path; no hash directory or extension-degree suffix is added. Security parameters remain fixed and audited at runtime but are not CSV columns. Retain stderr logs, command options (including seed), and the source revision separately for reproducibility.
+
+`proof_size = commitment_size + opening_proof_size`, in bytes. Both are the actual Postcard-encoded buffers passed through decoding and verification. The commitment root is counted once. Postcard framing is included: a single FRI root encodes to 33 bytes; STIR's one-group wrapper adds one more byte, for 34 bytes. Public `z`, `y` and configuration are excluded. This differs from BrakeFRI's raw 32-byte commitment encoding, although the compact CSV stores only the combined size.
 
 Rows append to existing files only when the header matches and the previous row is complete. Use independent output directories for independent runs; simultaneous writers to the same CSV are unsupported. The shared plotter reads these files and overlays selected protocols in each panel:
 
@@ -89,15 +95,15 @@ Rows append to existing files only when the header matches and the previous row 
 # FRI (blue) and STIR (orange), one four-panel figure per base field/thread count.
 python3 scripts/plot_results.py --protocols fri,stir
 
-# Add BrakeFRI (green), reading its CSVs from results/blake3 by default.
+# Add BrakeFRI (green), reading its CSVs from results/BrakeFRI by default.
 python3 scripts/plot_results.py
 
 # Custom input/output locations; validation alone does not generate images.
 python3 scripts/plot_results.py --protocols fri,stir \
-  --plonky3-results results/plonky3 --out results/plonky3/figures --validate-only
+  --plonky3-results results --out results/figures --validate-only
 ```
 
-Comparison images default to `<plonky3-results>/figures/goldilocks/threads_<count>.png` and `<plonky3-results>/figures/f128/threads_<count>.png`. Each contains commit, prove, verify and proof-size panels. Medians use five trials unless `--repetitions` specifies another count. Every selected protocol must cover all sizes `2^20..2^30` with matching thread counts. FRI/STIR inputs must share a seed and upstream revision for each base field; duplicate repetition IDs and mixed campaign data are rejected. Legends show only the protocol names.
+Comparison images default to `<plonky3-results>/figures/goldilocks/threads_<count>.png` and `<plonky3-results>/figures/f128/threads_<count>.png`. Each contains commit, prove, verify and proof-size panels. Medians use five trials unless `--repetitions` specifies another count. Plots include only sizes `2^20..2^28`; rows for `2^29` and `2^30` are ignored. By default, each base field compares only thread counts shared by all selected protocols. Pass `--threads 32` or `--threads 1,32` to require explicit counts; every selected protocol must cover all plotted sizes for those counts. To produce this range, pass `--log-n 20..28` to `sweep` (the benchmark default remains `20..30`). Inputs should come from the same seed and upstream revision for each base field. Compact CSVs do not contain seed/revision or repetition IDs, so the plotter checks row counts and coverage but cannot detect mixed campaigns or replaced duplicate trials. Legacy verbose FRI/STIR CSVs must be converted separately. BrakeFRI files must use `<results>/BrakeFRI/<base_field>.csv`; legacy paths are not supported. Legends show only the protocol names.
 
 ## Resource admission
 
