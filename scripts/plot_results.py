@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Compare BrakeFRI, FRI and STIR: one four-panel PNG per base field/thread count.
+"""Compare PCS benchmarks over log_n=20..28 (rows for 29..30 are ignored).
 
-Select protocols with --protocols (default: brakefri,fri,stir). --results supplies
-BrakeFRI CSVs; --plonky3-results supplies FRI/STIR CSVs. Each selected protocol
-must cover log_n=20..30 with matching thread counts and the requested repetitions.
-Plots medians, converting seconds to milliseconds and proof bytes to KiB.
+Read <root>/<protocol>/<base_field>.csv and plot medians of measured trials.
+Write figures directly to <out>/<base_field>/threads_<count>.png;
+the default output root is results/figures, with no comparison subdirectory.
+Overlay selected protocols at matching base fields, sizes and thread counts.
+By default, use thread counts shared by all selected protocols for each field;
+--threads selects explicit counts and requires every protocol to cover them.
+Every included thread count must have complete log_n=20..28 coverage.
+Compact CSVs do not record seeds/revisions or trial IDs: use separate directories
+for independent campaigns and retain benchmark logs for reproducibility.
 """
 from __future__ import annotations
 
@@ -15,85 +20,36 @@ from pathlib import Path
 from statistics import median
 
 FIELDS = {"goldilocks": "Goldilocks", "f128": "F128"}
-BRAKEFRI_PROFILES = {"goldilocks": "goldilocks_quadratic", "f128": "f128_base"}
-EXTENSIONS = {
-    "brakefri": {"goldilocks": 2, "f128": 1},
-    "fri": {"goldilocks": 3, "f128": 2},
-    "stir": {"goldilocks": 3, "f128": 2},
-}
-# Okabe-Ito colors, shared by every figure and metric.
 PROTOCOLS = {
     "brakefri": ("BrakeFRI", "#009E73"),
     "fri": ("FRI", "#0072B2"),
     "stir": ("STIR", "#D55E00"),
 }
-PCS_HEADER = (
-    "protocol,base_field,extension_degree,log_n,rate,queries_by_round,radii_by_round,"
-    "terminal_coefficients,target_bits,algebraic_bound_bits,pow_bits,threads,seed,"
-    "repetition,commit_time,prove_time,verify_time,commitment_size,opening_proof_size,"
-    "proof_size,plonky3_revision"
-).split(",")
-LOG_SIZES = tuple(range(20, 31))
+PCS_HEADER = "log_n,rho,threads,commit_time,prove_time,verify_time,proof_size".split(",")
 HEADER = "log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size".split(",")
+LOG_SIZES = tuple(range(20, 29))
 REPETITIONS = 5
-# Column, y-axis label, y-axis unit, conversion.
 METRICS = (
     ("commit_time", "Commit time", "ms", 1000.0),
-    ("prove_time", "Eval time", "ms", 1000.0),
-    ("verify_time", "Verifier time", "ms", 1000.0),
+    ("prove_time", "Open time", "ms", 1000.0),
+    ("verify_time", "Verify time", "ms", 1000.0),
     ("proof_size", "Proof size", "KiB", 1.0 / 1024.0),
 )
-Key = tuple[str, int, int, str]  # base field, threads, log_n, protocol
-
-
-def validate_pcs_row(row, protocol: str, field: str, log_n: int, path: Path):
-    terminal = 128 if protocol == "fri" else 1 << (log_n % 2)
-    if (row["protocol"], row["base_field"], int(row["extension_degree"]),
-            float(row["rate"]), int(row["terminal_coefficients"]),
-            int(row["target_bits"]), int(row["pow_bits"])) != (
-            protocol, field, EXTENSIONS[protocol][field], 0.5, terminal, 100, 0):
-        raise ValueError(f"{path}: incompatible protocol/field parameters")
-    bound = float(row["algebraic_bound_bits"])
-    if not math.isfinite(bound) or bound < 100:
-        raise ValueError(f"{path}: invalid algebraic security bound")
-    queries = [int(value) for value in row["queries_by_round"].split(";")]
-    radii = [float(value) for value in row["radii_by_round"].split(";")]
-    rounds = 1 if protocol == "fri" else log_n // 2
-    if (len(queries) != rounds or len(radii) != rounds
-            or any(q <= 0 for q in queries)
-            or any(not math.isfinite(r) or not 0 < r < 1 for r in radii)
-            or (protocol == "fri" and queries != [244])):
-        raise ValueError(f"{path}: invalid query/radius schedule")
-    commitment, opening, total = (int(row[key]) for key in (
-        "commitment_size", "opening_proof_size", "proof_size"))
-    if commitment != (33 if protocol == "fri" else 34) or opening <= 0 or total != commitment + opening:
-        raise ValueError(f"{path}: inconsistent serialized proof sizes")
-    revision = row["plonky3_revision"]
-    if len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
-        raise ValueError(f"{path}: invalid Plonky3 revision")
-    seed = int(row["seed"])
-    if not 0 <= seed < 1 << 64:
-        raise ValueError(f"{path}: invalid fixture seed")
-    return seed, revision
+Key = tuple[str, int, int, str]
 
 
 def load_medians(results: Path, plonky3_results: Path | None = None,
-                 protocols=("brakefri",), repetitions: int = REPETITIONS
+                 protocols=("brakefri",), repetitions: int = REPETITIONS,
+                 threads: tuple[int, ...] | None = None
                  ) -> dict[Key, dict[str, float]]:
-    """Validate each input independently, then require matching comparison coverage."""
     data: dict[Key, dict[str, float]] = {}
-    campaigns: dict[str, set[tuple[int, str]]] = {field: set() for field in FIELDS}
     for protocol in protocols:
+        root = results if protocol == "brakefri" else plonky3_results
+        if root is None:
+            raise ValueError("FRI/STIR input requires --plonky3-results")
         for field in FIELDS:
-            if protocol == "brakefri":
-                path = results / "blake3" / f"{BRAKEFRI_PROFILES[field]}.csv"
-                header = HEADER
-            else:
-                if plonky3_results is None:
-                    raise ValueError("FRI/STIR input requires --plonky3-results")
-                path = (plonky3_results / protocol / "blake3"
-                        / f"{field}_extension{EXTENSIONS[protocol][field]}.csv")
-                header = PCS_HEADER
+            path = root / PROTOCOLS[protocol][0] / f"{field}.csv"
+            header = HEADER if protocol == "brakefri" else PCS_HEADER
             groups: dict[tuple[int, int], list[dict[str, str]]] = {}
             with path.open(newline="") as stream:
                 reader = csv.DictReader(stream)
@@ -101,19 +57,18 @@ def load_medians(results: Path, plonky3_results: Path | None = None,
                     raise ValueError(f"{path}: unexpected CSV header")
                 for row in reader:
                     if None in row or any(value is None for value in row.values()):
-                        raise ValueError(f"{path}: row must have exactly {len(header)} columns")
+                        raise ValueError(f"{path}:{reader.line_num}: row must have exactly {len(header)} columns")
                     try:
-                        log_n, threads = int(row["log_n"]), int(row["threads"])
-                        if log_n not in LOG_SIZES or threads <= 0:
+                        log_n, thread_count = int(row["log_n"]), int(row["threads"])
+                        if not 20 <= log_n <= 30 or thread_count not in (1, 32):
                             raise ValueError("unexpected size/thread configuration")
-                        if protocol == "brakefri":
-                            if (int(row["m"]), int(row["k"]), float(row["rho"])) != (
-                                    64, 1 << (log_n - 6), 0.5):
-                                raise ValueError("incompatible BrakeFRI protocol parameters")
-                        else:
-                            campaigns[field].add(validate_pcs_row(row, protocol, field, log_n, path))
-                            if threads not in (1, 32):
-                                raise ValueError("FRI/STIR threads must be 1 or 32")
+                        if log_n not in LOG_SIZES or (threads is not None and thread_count not in threads):
+                            continue
+                        if float(row["rho"]) != 0.5:
+                            raise ValueError("incompatible rate")
+                        if protocol == "brakefri" and (int(row["m"]), int(row["k"])) != (
+                                64, 1 << (log_n - 6)):
+                            raise ValueError("incompatible BrakeFRI protocol parameters")
                         for column, _, _, _ in METRICS:
                             value = float(row[column])
                             if not math.isfinite(value) or value <= 0:
@@ -122,43 +77,40 @@ def load_medians(results: Path, plonky3_results: Path | None = None,
                             raise ValueError("invalid protocol byte count")
                     except ValueError as error:
                         raise ValueError(f"{path}:{reader.line_num}: {error}") from error
-                    groups.setdefault((threads, log_n), []).append(row)
+                    groups.setdefault((thread_count, log_n), []).append(row)
             if not groups:
                 raise ValueError(f"{path}: no measurements")
-            for threads in sorted({threads for threads, _ in groups}):
+            counts = set(threads) if threads is not None else {t for t, _ in groups}
+            for thread_count in sorted(counts):
                 for log_n in LOG_SIZES:
-                    rows = groups.get((threads, log_n), [])
+                    rows = groups.get((thread_count, log_n), [])
                     if len(rows) != repetitions:
                         raise ValueError(
-                            f"{path}: log_n={log_n}, threads={threads}: "
+                            f"{path}: log_n={log_n}, threads={thread_count}: "
                             f"expected {repetitions} trials, got {len(rows)}")
-                    if protocol != "brakefri":
-                        if sorted(int(row["repetition"]) for row in rows) != list(range(1, repetitions + 1)):
-                            raise ValueError(f"{path}: duplicate or missing repetition IDs at {threads=}, {log_n=}")
-                        settings = {tuple(row[key] for key in (
-                            "queries_by_round", "radii_by_round", "algebraic_bound_bits")) for row in rows}
-                        if len(settings) != 1:
-                            raise ValueError(f"{path}: mixed parameters within a configuration")
-                    data[field, threads, log_n, protocol] = {
+                    data[field, thread_count, log_n, protocol] = {
                         column: median(float(row[column]) for row in rows) * conversion
                         for column, _, _, conversion in METRICS
                     }
     for field in FIELDS:
-        if len(campaigns[field]) > 1:
-            raise ValueError(f"{field}: FRI/STIR files mix fixture seeds or Plonky3 revisions")
-        coverage = [{(t, n) for f, t, n, p in data if f == field and p == protocol}
+        coverage = [{t for f, t, _, p in data if f == field and p == protocol}
                     for protocol in protocols]
-        if any(cases != coverage[0] for cases in coverage[1:]):
-            raise ValueError(f"{field}: selected protocols have different thread/size coverage")
+        common = set.intersection(*coverage)
+        if not common:
+            raise ValueError(f"{field}: selected protocols have no common thread counts")
+        omitted = set.union(*coverage) - common
+        if omitted:
+            print(f"{field}: comparing shared threads={sorted(common)}; "
+                  f"omitting threads={sorted(omitted)} not available for every protocol.")
+        data = {key: values for key, values in data.items()
+                if key[0] != field or key[1] in common}
     return data
 
 
 def axis_limits(data: dict[Key, dict[str, float]], profile: str, metric: str):
-    # Share limits across all selected protocols and threads for this base field/metric.
     values = [metrics[metric] for key, metrics in data.items() if key[0] == profile]
     low, high = math.log2(min(values)), math.log2(max(values))
     padding = max((high - low) * 0.07, math.log2(1.035))
-    # Outer powers give even narrow verifier/proof ranges at least two ticks.
     return 2.0 ** math.floor(low - padding), 2.0 ** math.ceil(high + padding)
 
 
@@ -194,18 +146,14 @@ def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
             values = [data[profile, threads, n, protocol][metric] for n in LOG_SIZES]
             ax.plot(LOG_SIZES, values, color=color, label=name, linestyle="-", linewidth=1.8)
         configure_y_axis(ax, title, unit, axis_limits(data, profile, metric))
-        # Coordinates are log2(n), so label them with the corresponding counts.
-        ax.set_xlim(19.7, 30.3)
+        ax.set_xlim(LOG_SIZES[0] - 0.3, LOG_SIZES[-1] + 0.3)
         ax.set_xticks(LOG_SIZES, [rf"$2^{{{n}}}$" for n in LOG_SIZES])
         ax.set_xlabel("Number of coefficients", labelpad=7)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    # One shared protocol legend centered above all four panels.
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
                bbox_transform=fig.transFigure, ncol=len(protocols), frameon=False,
                fontsize=10, handlelength=3, columnspacing=2)
-    # Keep the original output layout for BrakeFRI-only campaigns.
-    directory = BRAKEFRI_PROFILES[profile] if tuple(protocols) == ("brakefri",) else profile
-    path = out / directory / f"threads_{threads}.png"
+    path = out / profile / f"threads_{threads}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=dpi, facecolor="white", metadata={"Software": "PCS plot_results.py"})
     plt.close(fig)
@@ -219,19 +167,32 @@ def parse_protocols(value: str) -> tuple[str, ...]:
     return protocols
 
 
+def parse_threads(value: str) -> tuple[int, ...]:
+    try:
+        counts = tuple(int(part.strip()) for part in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("choose thread counts from 1,32") from error
+    if not counts or any(t not in (1, 32) for t in counts) or len(set(counts)) != len(counts):
+        raise argparse.ArgumentTypeError("choose distinct thread counts from 1,32")
+    return counts
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, default=root / "results",
-                        help="BrakeFRI CSV root (contains blake3/)")
-    parser.add_argument("--plonky3-results", type=Path, default=root / "results" / "plonky3",
-                        help="FRI/STIR CSV root (contains fri/blake3/ and stir/blake3/)")
+                        help="BrakeFRI CSV root (contains BrakeFRI/)")
+    parser.add_argument("--plonky3-results", type=Path, default=root / "results",
+                        help="FRI/STIR CSV root (contains FRI/ and STIR/)")
     parser.add_argument("--protocols", type=parse_protocols, default=parse_protocols("brakefri,fri,stir"),
                         help="Comma-separated protocols to overlay (default: brakefri,fri,stir)")
+    parser.add_argument("--threads", type=parse_threads,
+                        help="Thread counts, e.g. 32 or 1,32 (default: shared counts per field)")
     parser.add_argument("--repetitions", type=int, default=REPETITIONS,
                         help="Required measured trials per configuration (default: 5)")
     parser.add_argument("--out", type=Path,
-                        help="Default: <plonky3-results>/figures; <results>/figures for BrakeFRI only")
+                        help="Figure root; writes <out>/<base_field>/threads_<count>.png directly. "
+                             "Default: <plonky3-results>/figures; <results>/figures for BrakeFRI only")
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--validate-only", action="store_true",
                         help="Validate CSV completeness without importing Matplotlib or plotting")
@@ -239,28 +200,24 @@ def main():
     if args.dpi <= 0 or args.repetitions <= 0:
         parser.error("--dpi and --repetitions must be positive")
     try:
-        data = load_medians(args.results, args.plonky3_results, args.protocols, args.repetitions)
+        data = load_medians(args.results, args.plonky3_results, args.protocols,
+                            args.repetitions, args.threads)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     configurations = sorted({(profile, threads) for profile, threads, _, _ in data})
     print(f"Validated {len(data)} configurations, {len(data) * args.repetitions} measured trials "
-          f"in {len(FIELDS) * len(args.protocols)} BLAKE3 CSVs; "
-          f"protocols={','.join(args.protocols)}.")
+          f"in {len(FIELDS) * len(args.protocols)} CSVs; protocols={','.join(args.protocols)}.")
     if args.validate_only:
         return
-
     import matplotlib
-
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 11, "axes.labelsize": 10.5,
                          "xtick.labelsize": 10, "ytick.labelsize": 10})
     default_root = args.results if args.protocols == ("brakefri",) else args.plonky3_results
     for profile, threads in configurations:
-        path = plot_profile(data, profile, threads, args.out or default_root / "figures",
-                            args.dpi, args.protocols)
-        print(path)
+        print(plot_profile(data, profile, threads, args.out or default_root / "figures",
+                           args.dpi, args.protocols))
     print(f"Generated {len(configurations)} figures; raw CSV files were not modified.")
 
 
