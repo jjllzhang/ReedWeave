@@ -77,12 +77,17 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
     }
     assert_eq!(directory.path().read_dir().unwrap().count(), 1);
     assert_eq!(
-        directory.path().join("blake3").read_dir().unwrap().count(),
+        directory
+            .path()
+            .join("BrakeFRI")
+            .read_dir()
+            .unwrap()
+            .count(),
         2
     );
-    for field in ["goldilocks_quadratic", "f128_base"] {
-        let text =
-            std::fs::read_to_string(directory.path().join(format!("blake3/{field}.csv"))).unwrap();
+    for field in ["goldilocks", "f128"] {
+        let text = std::fs::read_to_string(directory.path().join(format!("BrakeFRI/{field}.csv")))
+            .unwrap();
         assert_eq!(text.lines().count(), 5);
         for (index, row) in text.lines().skip(1).enumerate() {
             let columns: Vec<_> = row.split(',').collect();
@@ -97,7 +102,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
             assert!(columns[8].parse::<usize>().unwrap() > 32);
         }
     }
-    let path = directory.path().join("blake3/f128_base.csv");
+    let path = directory.path().join("BrakeFRI/f128.csv");
     std::fs::write(&path, "incompatible\n").unwrap();
     let rejected = bench(
         directory.path(),
@@ -131,7 +136,7 @@ fn commands_write_only_verified_trials_and_preserve_incompatible_files() {
         ],
     );
     assert!(!rejected.status.success());
-    assert!(!limited.path().join("blake3/f128_base.csv").exists());
+    assert!(!limited.path().join("BrakeFRI/f128.csv").exists());
     assert_eq!(limited.path().read_dir().unwrap().count(), 0);
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("unmeasured"));
 }

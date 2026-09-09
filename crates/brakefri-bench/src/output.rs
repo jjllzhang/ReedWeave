@@ -4,20 +4,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use brakefri_core::{BrakeParams, M};
-use brakefri_primitives::hash::HASH_ID;
+use brakefri_core::{BrakeParams, M, Profile};
 
-use crate::{
-    Result,
-    config::{Case, field_name},
-};
+use crate::{Result, config::Case};
 
 pub const HEADER: &str = "log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size";
 
 pub fn csv_path(case: &Case, output: &Path) -> PathBuf {
-    output
-        .join(HASH_ID)
-        .join(format!("{}.csv", field_name(case.field).replace('-', "_")))
+    let field = match case.field {
+        Profile::GoldilocksQuadratic => "goldilocks",
+        Profile::F128Base => "f128",
+    };
+    output.join("BrakeFRI").join(format!("{field}.csv"))
 }
 /// The sweep owns one child at a time. Separate invocations must use separate output
 /// directories; concurrent writers to the same result series are unsupported.

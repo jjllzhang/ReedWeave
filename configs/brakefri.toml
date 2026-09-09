@@ -11,6 +11,8 @@ log_n_max = 30
 threads = [1, 32]
 # Every configuration runs one full discarded warmup, then this many measured trials.
 repetitions = 5
+# Output root: writes BrakeFRI/goldilocks.csv and BrakeFRI/f128.csv beneath it.
+# Filenames use base-field names only, without extension-profile suffixes.
 output_dir = "results"
 seed = 20260906
 # Warmup and measured trials use separate fresh PCS/DFT instances.

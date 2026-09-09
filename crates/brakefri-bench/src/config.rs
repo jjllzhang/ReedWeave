@@ -29,7 +29,7 @@ pub enum Command {
 pub struct Common {
     #[arg(long, default_value = "configs/brakefri.toml")]
     pub config: PathBuf,
-    /// Override the output directory (raw trials are appended).
+    /// Override the output root (raw trials append to BrakeFRI/<base_field>.csv).
     #[arg(long)]
     pub out: Option<PathBuf>,
     /// Fixture seed; independent of Fiat-Shamir. Same inputs across hashes/threads.

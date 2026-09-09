@@ -98,11 +98,32 @@ fn cli_lists_ranges_and_checked_config_overrides() {
     assert!(Config::load(&c).is_err());
 }
 #[test]
+fn csv_paths_use_protocol_directory_and_base_field_names() {
+    let mut common = common(std::path::Path::new("../../configs/brakefri.toml"));
+    let config = Config::load(&common).unwrap();
+    for root in ["results", "custom-results"] {
+        if root != "results" {
+            common.out = Some(root.into());
+        }
+        let settings = config.settings(&common);
+        for (field, filename) in [
+            (Profile::GoldilocksQuadratic, "goldilocks.csv"),
+            (Profile::F128Base, "f128.csv"),
+        ] {
+            let case = Case { field, ..case() };
+            assert_eq!(
+                output::csv_path(&case, &settings.output),
+                std::path::Path::new(root).join("BrakeFRI").join(filename)
+            );
+        }
+    }
+}
+#[test]
 fn csv_exact_header_append_and_accounting() {
     let directory = tempfile::tempdir().unwrap();
     let case = case();
     let path = output::csv_path(&case, directory.path());
-    assert!(path.ends_with("blake3/goldilocks_quadratic.csv"));
+    assert!(path.ends_with("BrakeFRI/goldilocks.csv"));
     let trial = output::VerifiedTrial {
         commit_time: 0.1,
         prove_time: 0.2,

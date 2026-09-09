@@ -60,7 +60,7 @@ pub enum Command {
 }
 #[derive(Args, Clone, Debug)]
 pub struct Settings {
-    #[arg(long, default_value = "results/plonky3")]
+    #[arg(long, default_value = "results")]
     pub out: PathBuf,
     #[arg(long, default_value_t = 20260906)]
     pub seed: u64,
@@ -128,13 +128,11 @@ impl Case {
     pub fn csv_path(&self, settings: &Settings) -> PathBuf {
         settings
             .out
-            .join(self.protocol.name())
-            .join("blake3")
-            .join(format!(
-                "{}_extension{}.csv",
-                self.field.name(),
-                self.field.extension_degree()
-            ))
+            .join(match self.protocol {
+                Protocol::Fri => "FRI",
+                Protocol::Stir => "STIR",
+            })
+            .join(format!("{}.csv", self.field.name()))
     }
 }
 #[derive(Args)]

@@ -57,29 +57,24 @@ pub fn audit(case: &Case) -> Result<Audit> {
     }
 }
 pub fn run(case: &Case, settings: &Settings) -> Result<()> {
-    let audit = audit(case)?;
+    audit(case)?;
     resources::admit(case, settings)?;
     match (case.field, case.protocol) {
         (Field::Goldilocks, Protocol::Fri) => {
-            run_generic::<Goldilocks, GoldilocksCubic, _>(case, settings, &audit, params::fri)
+            run_generic::<Goldilocks, GoldilocksCubic, _>(case, settings, params::fri)
         }
         (Field::Goldilocks, Protocol::Stir) => {
-            run_generic::<Goldilocks, GoldilocksCubic, _>(case, settings, &audit, params::stir)
+            run_generic::<Goldilocks, GoldilocksCubic, _>(case, settings, params::stir)
         }
         (Field::F128, Protocol::Fri) => {
-            run_generic::<F128, F128Quadratic, _>(case, settings, &audit, params::fri)
+            run_generic::<F128, F128Quadratic, _>(case, settings, params::fri)
         }
         (Field::F128, Protocol::Stir) => {
-            run_generic::<F128, F128Quadratic, _>(case, settings, &audit, params::stir)
+            run_generic::<F128, F128Quadratic, _>(case, settings, params::stir)
         }
     }
 }
-fn run_generic<F, EF, PCS>(
-    case: &Case,
-    settings: &Settings,
-    audit: &Audit,
-    make_pcs: fn() -> PCS,
-) -> Result<()>
+fn run_generic<F, EF, PCS>(case: &Case, settings: &Settings, make_pcs: fn() -> PCS) -> Result<()>
 where
     F: CanonicalField + TwoAdicField + Ord,
     EF: ExtensionField<F> + TwoAdicField,
@@ -92,8 +87,10 @@ where
     let seed = settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64;
     let mut points = Fixture(seed);
     eprintln!(
-        "START {} warmups=1 repetitions={}",
+        "START {} seed={} upstream_revision={} warmups=1 repetitions={}",
         case.label(),
+        settings.seed,
+        output::REVISION,
         settings.repetitions
     );
     for repetition in 0..=settings.repetitions {
@@ -106,7 +103,7 @@ where
             points = Fixture(seed);
             eprintln!("WARMUP VERIFIED {}", case.label());
         } else {
-            output::append(&mut csv, case, settings, audit, repetition, &trial)?;
+            output::append(&mut csv, case, &trial)?;
             eprintln!(
                 "VERIFIED {} repetition={} proof_size={}",
                 case.label(),
