@@ -1,23 +1,112 @@
-[protocol]
-m = 64
+# Goldilocks, blowup=2, 100-bit IOP soundness target.
+# Minimize expected protocol-only multiproof bytes with terminal_coefficients <= 256.
+# Search e in {1,2,3,5} and all valid power-of-two m and terminal sizes.
+# This does not certify Fiat-Shamir or hash security; wire sizes may differ.
+# Load explicitly with --config configs/brakefri.toml; no implicit config.
+# Run uses [pp] (log_d=20); sweep/preflight use the nine complete [[cases]].
+# Do not override pp axes when running this tuned sweep.
+[pp]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 20
+m = 32
 blowup = 2
-num_queries = 244
+terminal_coefficients = 256
+num_queries = 241
 
-# CLI benchmark options override these settings. Fixed protocol values are checked.
+# Runtime settings do not enter mathematical pp. CLI overrides before validation.
 [benchmark]
-fields = ["goldilocks-quadratic", "f128-base"]
-log_n_min = 20
-log_n_max = 30
 threads = [1, 32]
-# Every configuration runs one full discarded warmup, then this many measured trials.
+# One full discarded verified warmup, then this many measured trials.
 repetitions = 5
-# Output root: writes BrakeFRI/goldilocks.csv and BrakeFRI/f128.csv beneath it.
-# Filenames use base-field names only, without extension-profile suffixes.
+# Core-only timing: <output_dir>/BrakeFRI/v3/goldilocks.csv
+# Plotter reads results/BrakeFRI/goldilocks.csv; replace it only after validating a fresh run.
 output_dir = "results"
 seed = 20260906
-# Warmup and measured trials use separate fresh PCS/DFT instances.
-# DFT cache construction is included in each measured commit.
-# Optional per-case admission cap (MiB); also limited to 80% of available memory.
+# Optional sweep/preflight axes; otherwise use [pp].
+# log_d = [20, 21, 22]
+# extension_degrees = [1, 2, 3, 5]
 # max_memory_mib = 65536
-# Optional child wall time limit, including setup, warmup, and every repetition.
 # time_limit_seconds = 3600
+
+# Complete tuned cases: Q is the minimum certified by scripts/brakefri_queries.py.
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 20
+m = 32
+blowup = 2
+terminal_coefficients = 256
+num_queries = 241
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 21
+m = 32
+blowup = 2
+terminal_coefficients = 256
+num_queries = 241
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 22
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 242
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 23
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 242
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 24
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 242
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 25
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 242
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 2
+log_d = 26
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 244
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 27
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 241
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 28
+m = 64
+blowup = 2
+terminal_coefficients = 256
+num_queries = 241
