@@ -1,6 +1,6 @@
 //! Exhaustive small-tree frontier checks through borrowed flat scalar openings.
 use brakefri_primitives::{
-    fields::{CanonicalField, F128, GoldilocksQuadratic},
+    fields::{CanonicalField, Goldilocks, GoldilocksCubic, GoldilocksQuadratic, GoldilocksQuintic},
     hash::LeafKind,
     mmcs::CanonicalMmcs,
 };
@@ -114,5 +114,7 @@ fn all_subsets<F: CanonicalField>() {
 #[test]
 fn every_small_scalar_frontier_matches_paths_and_rejects_malformed_openings() {
     all_subsets::<GoldilocksQuadratic>();
-    all_subsets::<F128>();
+    all_subsets::<Goldilocks>();
+    all_subsets::<GoldilocksCubic>();
+    all_subsets::<GoldilocksQuintic>();
 }

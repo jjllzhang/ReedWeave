@@ -1,5 +1,5 @@
 use brakefri_primitives::{
-    fields::{CanonicalField, F128, Goldilocks, GoldilocksQuadratic},
+    fields::{CanonicalField, Goldilocks, GoldilocksQuadratic},
     hash::{Digest, LeafKind, NodeHash, TranscriptHash},
     mmcs::CanonicalMmcs,
 };
@@ -76,21 +76,9 @@ fn canonical_coordinates_reject_aliases_and_preserve_basis_order() {
         bad[8 * coordinate..8 * (coordinate + 1)].copy_from_slice(&p.to_le_bytes());
         assert!(GoldilocksQuadratic::from_canonical_bytes(&bad).is_err());
     }
-    for value in [0, 1, F128::MODULUS - 1] {
-        let element = F128::new(value);
-        assert_eq!(element.to_canonical_bytes(), value.to_le_bytes());
-        assert_eq!(
-            <F128 as CanonicalField>::from_canonical_bytes(&element.to_canonical_bytes()).unwrap(),
-            element
-        );
-    }
-    for value in [F128::MODULUS, u128::MAX] {
-        assert!(<F128 as CanonicalField>::from_canonical_bytes(&value.to_le_bytes()).is_err());
-    }
     for length in [0, 7, 9, 15, 17, 32] {
         assert!(Goldilocks::from_canonical_bytes(&vec![0; length]).is_err());
         assert!(GoldilocksQuadratic::from_canonical_bytes(&vec![0; length]).is_err());
-        assert!(<F128 as CanonicalField>::from_canonical_bytes(&vec![0; length]).is_err());
     }
 }
 
@@ -129,16 +117,6 @@ fn canonical_merkle_roots_match_independent_blake3_vectors() {
         LeafKind::Challenge,
         vec![quadratic(1, 2), quadratic(3, 4)],
         "abae38dbf2e2987726687f7e9216a67fbe19de3121f78dad4eb53283a36a7a64",
-    );
-    root_vector(
-        LeafKind::Base,
-        vec![F128::new(1), F128::new(2)],
-        "d6d7487ad19c98cbeb83722e851aadc166ee71d44fe09fa2e970541135d2877e",
-    );
-    root_vector(
-        LeafKind::Challenge,
-        vec![F128::new(1), F128::new(2)],
-        "36594bb91b4210bccf0ebc4fbc5c5a70696ae25030bd1eb8eb6a0419c51d3fe1",
     );
 }
 
@@ -271,8 +249,11 @@ fn base_and_extension_multiproofs_and_malformed_openings() {
         1,
         (0..8).map(|i| quadratic(i, 100 + i)).collect(),
     );
-    multiproof_cases(LeafKind::Base, 3, (0..24).map(F128::new).collect());
-    multiproof_cases(LeafKind::Challenge, 1, (0..8).map(F128::new).collect());
+    multiproof_cases(
+        LeafKind::Challenge,
+        1,
+        (0..8).map(Goldilocks::new).collect(),
+    );
 }
 
 #[test]
@@ -301,9 +282,9 @@ fn reject_wrong_role_and_malformed_commit_shapes() {
             )
             .is_err()
     );
-    assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Challenge, 1).is_err());
+    assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Challenge, 1).is_ok());
     assert!(CanonicalMmcs::<GoldilocksQuadratic>::new(LeafKind::Base, 1).is_err());
-    assert!(CanonicalMmcs::<F128>::new(LeafKind::Challenge, 2).is_err());
+    assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Challenge, 2).is_err());
     assert!(CanonicalMmcs::<Goldilocks>::new(LeafKind::Base, 0).is_err());
     for (width, length) in [(0, 0), (0, 4), (1, 0), (1, 1), (1, 3), (2, 3), (2, 8)] {
         // Public fields can be mutated after the constructor's shape assertions.
@@ -311,10 +292,13 @@ fn reject_wrong_role_and_malformed_commit_shapes() {
         matrix.width = width;
         assert!(mmcs.commit(matrix, &execution).is_err());
     }
-    let base = CanonicalMmcs::<F128>::new(LeafKind::Base, 1).unwrap();
-    let challenge = CanonicalMmcs::<F128>::new(LeafKind::Challenge, 1).unwrap();
+    let base = CanonicalMmcs::<Goldilocks>::new(LeafKind::Base, 1).unwrap();
+    let challenge = CanonicalMmcs::<Goldilocks>::new(LeafKind::Challenge, 1).unwrap();
     let (root, state) = base
-        .commit(RowMajorMatrix::new_col(vec![F128::ONE; 2]), &execution)
+        .commit(
+            RowMajorMatrix::new_col(vec![Goldilocks::ONE; 2]),
+            &execution,
+        )
         .unwrap();
     assert!(challenge.open_multi_batch(&[0, 1], &state).is_err());
     let opening = base.open_multi_batch(&[0, 1], &state).unwrap();

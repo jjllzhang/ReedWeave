@@ -4,18 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use brakefri_core::{BrakeParams, M, Profile};
+use brakefri_core::BrakeParams;
 
 use crate::{Result, config::Case};
 
-pub const HEADER: &str = "log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size";
+pub const HEADER: &str = "base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB";
 
-pub fn csv_path(case: &Case, output: &Path) -> PathBuf {
-    let field = match case.field {
-        Profile::GoldilocksQuadratic => "goldilocks",
-        Profile::F128Base => "f128",
-    };
-    output.join("BrakeFRI").join(format!("{field}.csv"))
+pub fn csv_path(_case: &Case, output: &Path) -> PathBuf {
+    output.join("BrakeFRI/v3/goldilocks.csv")
 }
 /// The sweep owns one child at a time. Separate invocations must use separate output
 /// directories; concurrent writers to the same result series are unsupported.
@@ -54,6 +50,7 @@ pub fn open_csv(path: &Path) -> Result<File> {
     Ok(file)
 }
 
+/// Internal measurements use seconds and bytes; CSV output converts to ms and KiB.
 #[derive(Debug)]
 pub struct VerifiedTrial {
     pub commit_time: f64,
@@ -75,14 +72,19 @@ pub fn append_trial(
         return Err("invalid measured trial".into());
     }
     let row = format!(
-        "{},{M},{},0.5,{},{:.9},{:.9},{:.9},{}\n",
-        params.log_n(),
-        params.k(),
+        "{},{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3}\n",
+        params.base_field(),
+        params.extension_degree(),
+        params.log_d(),
+        params.m(),
+        params.blowup(),
+        params.terminal_coefficient_count(),
+        params.num_queries(),
         threads,
-        trial.commit_time,
-        trial.prove_time,
-        trial.verify_time,
-        trial.proof_size
+        trial.commit_time * 1000.0,
+        trial.prove_time * 1000.0,
+        trial.verify_time * 1000.0,
+        trial.proof_size as f64 / 1024.0
     );
     file.write_all(row.as_bytes())?;
     file.flush()?;

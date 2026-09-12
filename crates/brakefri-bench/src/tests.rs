@@ -1,129 +1,111 @@
 use super::*;
-use brakefri_core::Profile;
-use config::Common;
+use brakefri_core::{BaseField, PublicParams};
 
-fn common(path: &std::path::Path) -> Common {
-    Common {
-        config: path.to_path_buf(),
-        out: None,
-        seed: None,
-        repetitions: None,
-        max_memory_mib: None,
-        time_limit_seconds: None,
+pub(crate) fn case() -> Case {
+    Case {
+        pp: PublicParams {
+            base_field: BaseField::Goldilocks,
+            extension_degree: 2,
+            log_d: 4,
+            m: 2,
+            blowup: 4,
+            terminal_coefficients: 2,
+            num_queries: 3,
+        },
+        threads: 1,
     }
 }
-fn case() -> Case {
-    Case {
-        field: Profile::GoldilocksQuadratic,
-        log_n: 20,
-        threads: 32,
+const PP: &str = "[pp]\nbase_field='goldilocks'\nextension_degree=2\nlog_d=4\nm=2\nblowup=4\nterminal_coefficients=2\nnum_queries=3\n";
+#[test]
+fn overlay_then_validate_and_strict_schema() {
+    let config: Config = toml::from_str(
+        &PP.replace("m=2", "m=0")
+            .replace("'goldilocks'", "'invalid'"),
+    )
+    .unwrap();
+    let mut common = config::Common::default();
+    assert!(config::cases(Some(&config), &common, None, false).is_err());
+    common.pp.m = Some(2);
+    common.pp.base_field = Some("goldilocks".into());
+    assert_eq!(
+        config::cases(Some(&config), &common, None, false).unwrap()[0]
+            .pp
+            .m,
+        2
+    );
+    for invalid in [
+        PP.replace("[pp]", "[protocol]"),
+        PP.replace("m=2", "m=2\nunknown=1"),
+        PP.replace("log_d=4\n", ""),
+        format!("{PP}\n[benchmark]\nfields=['goldilocks']"),
+        format!("{PP}\n[unknown]\nx=1"),
+    ] {
+        assert!(toml::from_str::<Config>(&invalid).is_err(), "{invalid}");
     }
+    assert!(config::cases(None, &common, None, false).is_err());
+    assert!(Config::load(&common).unwrap().is_none());
+    let config: Config = toml::from_str(&format!("{PP}\n[benchmark]\nrepetitions=0")).unwrap();
+    assert!(config::settings(Some(&config), &common).is_err());
+    common.repetitions = Some(1);
+    assert_eq!(
+        config::settings(Some(&config), &common)
+            .unwrap()
+            .repetitions,
+        1
+    );
 }
 #[test]
-fn cli_lists_ranges_and_checked_config_overrides() {
+fn lists_ranges_full_cases_and_old_switches() {
+    let config: Config = toml::from_str(PP).unwrap();
     let cli = Cli::try_parse_from([
         "bench",
         "preflight",
-        "--fields",
-        "goldilocks-quadratic,f128-base",
-        "--log-n",
-        "20..30",
+        "--extension-degree",
+        "1,2,3,5",
+        "--log-d",
+        "4,5..6",
         "--threads",
         "1,32",
-        "--repetitions",
-        "2",
     ])
     .unwrap();
-    let Command::Preflight(mut matrix) = cli.command else {
+    let Command::Preflight(matrix) = cli.command else {
         panic!()
     };
-    matrix.common.config = "../../configs/brakefri.toml".into();
-    let config = Config::load(&matrix.common).unwrap();
-    let cases = config.cases(&matrix).unwrap();
-    assert_eq!(cases.len(), 44);
-    assert_eq!(cases[0].log_n, 20);
-    assert_eq!(cases.last().unwrap().log_n, 30);
-    assert_eq!(cases.last().unwrap().threads, 32);
-    assert_eq!(config.settings(&matrix.common).repetitions, 2);
-    matrix.common.repetitions = None;
-    assert_eq!(config.settings(&matrix.common).repetitions, 5);
-    for range in ["30..20", "10", "31", "20..=30", "20..30..30", "-1"] {
+    let cases = config::cases(
+        Some(&config),
+        &matrix.common,
+        matrix.threads.as_deref(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(cases.len(), 24);
+    assert_eq!(cases.last().unwrap().pp.extension_degree, 5);
+    assert_eq!(cases.last().unwrap().pp.log_d, 6);
+    assert!(config::cases(Some(&config), &matrix.common, None, false).is_err());
+    for range in ["30..20", "64", "20..=30", "20..30..30", "-1", ""] {
         assert!(config::sizes(range).is_err());
     }
-    for args in [
-        vec![
-            "bench",
-            "run",
-            "--field",
-            "unknown",
-            "--log-n",
-            "11",
-            "--threads",
-            "1",
-        ],
-        vec![
-            "bench",
-            "run",
-            "--field",
-            "f128-base",
-            "--log-n",
-            "11",
-            "--threads",
-            "-1",
-        ],
-    ] {
-        assert!(Cli::try_parse_from(args).is_err());
+    assert_eq!(config::sizes("1,31..32").unwrap(), vec![1, 31, 32]);
+    for switch in ["--d", "--log-n", "--field", "--fields"] {
+        assert!(Cli::try_parse_from(["bench", "run", switch, "1"]).is_err());
     }
-    let mut zero = case();
-    zero.threads = 0;
-    assert!(zero.params().is_err());
-    let source = std::fs::read_to_string("../../configs/brakefri.toml").unwrap();
-    for invalid in [
-        source.replace("m = 64", "m = 1024"),
-        source.replace("blowup = 2", "blowup = 4"),
-        source.replace("num_queries = 244", "num_queries = 243"),
-        source.replace("threads = [1, 32]", "threads = [0]"),
-        source.replace("threads = [1, 32]", "threads = [1, 16]"),
-        source.replace("repetitions = 5", "repetitions = 0"),
-        source.replace("log_n_max = 30", "log_n_max = 31"),
-    ] {
-        let c: Config = toml::from_str(&invalid).unwrap();
-        assert!(c.validate().is_err());
-    }
-    assert!(
-        toml::from_str::<Config>(&source.replace("m = 64", "m = 64\nunrecognized = 7")).is_err()
+    let full = format!(
+        "{PP}\n{}\n{}",
+        PP.replace("[pp]", "[[cases]]"),
+        PP.replace("[pp]", "[[cases]]")
+            .replace("log_d=4", "log_d=5")
     );
-    let mut c = common(std::path::Path::new("../../configs/brakefri.toml"));
-    c.repetitions = Some(0);
-    assert!(Config::load(&c).is_err());
-}
-#[test]
-fn csv_paths_use_protocol_directory_and_base_field_names() {
-    let mut common = common(std::path::Path::new("../../configs/brakefri.toml"));
-    let config = Config::load(&common).unwrap();
-    for root in ["results", "custom-results"] {
-        if root != "results" {
-            common.out = Some(root.into());
-        }
-        let settings = config.settings(&common);
-        for (field, filename) in [
-            (Profile::GoldilocksQuadratic, "goldilocks.csv"),
-            (Profile::F128Base, "f128.csv"),
-        ] {
-            let case = Case { field, ..case() };
-            assert_eq!(
-                output::csv_path(&case, &settings.output),
-                std::path::Path::new(root).join("BrakeFRI").join(filename)
-            );
-        }
-    }
+    let config: Config = toml::from_str(&full).unwrap();
+    let cases = config::cases(Some(&config), &config::Common::default(), None, true).unwrap();
+    assert_eq!(cases.len(), 2);
+    assert_eq!(cases[1].pp.log_d, 5);
 }
 #[test]
 fn csv_exact_header_append_and_accounting() {
     let directory = tempfile::tempdir().unwrap();
     let case = case();
     let path = output::csv_path(&case, directory.path());
-    assert!(path.ends_with("BrakeFRI/goldilocks.csv"));
+    assert!(path.ends_with("BrakeFRI/v3/goldilocks.csv"));
     let trial = output::VerifiedTrial {
         commit_time: 0.1,
         prove_time: 0.2,
@@ -140,23 +122,28 @@ fn csv_exact_header_append_and_accounting() {
     assert_eq!(lines[0], output::HEADER);
     assert_eq!(
         lines[1],
-        "20,64,16384,0.5,32,0.100000000,0.200000000,0.300000000,12345"
+        "goldilocks,2,4,2,4,2,3,1,100.000,200.000,300.000,12.056"
     );
-    assert!(lines.iter().all(|line| line.split(',').count() == 9));
-    std::fs::write(&path, "wrong,header\n").unwrap();
-    assert!(output::open_csv(&path).is_err());
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "wrong,header\n");
-    std::fs::write(&path, format!("{}\n20,1024", output::HEADER)).unwrap();
-    assert!(output::open_csv(&path).is_err());
+    assert!(lines.iter().all(|line| line.split(',').count() == 12));
+    for invalid in [
+        "log_n,m,k,rho,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB\n"
+            .to_string(),
+        "wrong,header\n".into(),
+        format!("{}\ngoldilocks", output::HEADER),
+    ] {
+        std::fs::write(&path, &invalid).unwrap();
+        assert!(output::open_csv(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+    }
 }
 #[test]
-fn estimates_include_retained_data_and_resource_failures() {
+fn dynamic_estimates_and_overflow_without_large_allocations() {
     let mut c = case();
-    c.log_n = 30;
+    c.pp.log_d = 31;
+    c.pp.m = 64;
     let estimate = Estimate::new(&c).unwrap();
-    assert_eq!(estimate.coefficients, 8 << 30);
-    assert_eq!(estimate.matrix, 16 << 30);
-    assert!(estimate.scratch >= estimate.matrix);
+    assert_eq!(estimate.coefficients, 8 << 31);
+    assert_eq!(estimate.matrix, 32 << 31);
     let params = c.params().unwrap();
     let tree_nodes: usize = (0..=params.rounds())
         .map(|j| 2 * params.layer_size(j).unwrap() - 1)
@@ -169,19 +156,42 @@ fn estimates_include_retained_data_and_resource_failures() {
         max_memory_mib: Some(1),
         time_limit_seconds: None,
     };
+    let available = Available {
+        memory: Some(1 << 40),
+        cpus: Some(3),
+    };
+    assert!(resources::admit(&estimate, &settings, &available).is_err());
+    let overflowing = Settings {
+        max_memory_mib: Some(u64::MAX),
+        ..settings
+    };
+    assert!(resources::admit(&estimate, &overflowing, &available).is_err());
+    c.pp.extension_degree = 5;
+    assert!(Estimate::new(&c).unwrap().scratch > estimate.scratch);
+    c.pp.num_queries = usize::MAX;
+    assert!(Estimate::new(&c).is_err());
+    // Valid tiny geometry with enormous replacement-query count: the core's
+    // deduplicated proof bound fits, but the conservative resource sum overflows.
+    c = case();
+    c.pp.log_d = 1;
+    c.pp.m = 1;
+    c.pp.blowup = 2;
+    c.pp.terminal_coefficients = 1;
+    c.pp.num_queries = usize::MAX / 64;
+    c.params().unwrap();
     assert!(
-        resources::admit(
-            &estimate,
-            &settings,
-            &Available {
-                memory: Some(1 << 40),
-                cpus: Some(3)
-            }
-        )
-        .is_err()
+        Estimate::new(&c)
+            .unwrap_err()
+            .to_string()
+            .contains("overflow")
     );
-    c.field = Profile::F128Base;
-    assert_eq!(Estimate::new(&c).unwrap().coefficients, 16 << 30);
+    c = case();
+    c.pp.log_d = usize::MAX;
+    assert!(Estimate::new(&c).is_err());
+    c = case();
     c.threads = usize::MAX;
     assert!(Estimate::new(&c).is_err());
+    c = case();
+    c.pp.num_queries += 1;
+    assert!(Estimate::new(&c).unwrap().scratch > Estimate::new(&case()).unwrap().scratch);
 }

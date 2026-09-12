@@ -16,7 +16,6 @@ p3-blake3.workspace = true
 p3-challenger.workspace = true
 p3-commit.workspace = true
 p3-merkle-tree.workspace = true
-p3-f128-adapter.workspace = true
 brakefri-runtime.workspace = true
 thiserror.workspace = true
 

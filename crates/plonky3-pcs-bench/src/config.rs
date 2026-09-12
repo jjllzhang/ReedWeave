@@ -6,44 +6,53 @@ use std::path::PathBuf;
 pub enum Protocol {
     Fri,
     Stir,
+    Whir,
 }
 impl Protocol {
     pub fn name(self) -> &'static str {
         match self {
             Self::Fri => "fri",
             Self::Stir => "stir",
+            Self::Whir => "whir",
         }
+    }
+    pub fn timing_model(self) -> &'static str {
+        match self {
+            Self::Fri | Self::Stir | Self::Whir => "core-v1",
+        }
+    }
+    pub fn max_log_n(self) -> usize {
+        if self == Self::Whir { 28 } else { 30 }
+    }
+    pub fn fields(self) -> &'static [Field] {
+        &[Field::Goldilocks]
     }
 }
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 pub enum Field {
     Goldilocks,
-    F128,
 }
 impl Field {
     pub fn name(self) -> &'static str {
         match self {
             Self::Goldilocks => "goldilocks",
-            Self::F128 => "f128",
         }
     }
     pub fn extension_degree(self) -> usize {
         match self {
             Self::Goldilocks => 3,
-            Self::F128 => 2,
         }
     }
     pub fn base_bytes(self) -> usize {
         match self {
             Self::Goldilocks => 8,
-            Self::F128 => 16,
         }
     }
 }
 #[derive(Parser)]
 #[command(
     version,
-    about = "Coefficient-input Plonky3 FRI/STIR PCS benchmarks; fixed audited 100-bit parameters, zero PoW"
+    about = "Plonky3 FRI/STIR univariate and WHIR native multilinear PCS benchmarks; audited 100-bit target, zero PoW; FRI/STIR/WHIR timing_model=core-v1"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -60,6 +69,7 @@ pub enum Command {
 }
 #[derive(Args, Clone, Debug)]
 pub struct Settings {
+    /// Result root: FRI/STIR use <protocol>/goldilocks.csv; WHIR uses WHIR/goldilocks.csv.
     #[arg(long, default_value = "results")]
     pub out: PathBuf,
     #[arg(long, default_value_t = 20260906)]
@@ -97,7 +107,7 @@ pub struct Run {
 pub struct Case {
     #[arg(long, value_enum)]
     pub protocol: Protocol,
-    /// Coefficient field; challenge extension is cubic / quadratic respectively.
+    /// Goldilocks input field with cubic challenges.
     #[arg(long, value_enum)]
     pub field: Field,
     #[arg(long)]
@@ -107,22 +117,32 @@ pub struct Case {
 }
 impl Case {
     pub fn validate(&self) -> Result<()> {
-        if !(20..=30).contains(&self.log_n) || !matches!(self.threads, 1 | 32) {
-            return Err("log_n must be 20..=30 and threads must be 1 or 32".into());
+        if !(20..=self.protocol.max_log_n()).contains(&self.log_n) {
+            return Err(format!(
+                "{} log_n must be 20..={}",
+                self.protocol.name(),
+                self.protocol.max_log_n()
+            )
+            .into());
         }
-        if brakefri_primitives::TERMINAL_COEFFICIENTS != 128 {
-            return Err("BrakeFRI terminal size changed; renew the FRI security audit".into());
+        if !matches!(self.threads, 1 | 32) {
+            return Err("threads must be 1 or 32".into());
         }
         Ok(())
     }
     pub fn label(&self) -> String {
         format!(
-            "{} {} extension={} log_n={} threads={}",
+            "{} {} extension={} log_n={} threads={}{}",
             self.protocol.name(),
             self.field.name(),
             self.field.extension_degree(),
             self.log_n,
-            self.threads
+            self.threads,
+            if self.protocol == Protocol::Whir {
+                " input=hypercube_evaluations opening=prescribed_multilinear"
+            } else {
+                ""
+            }
         )
     }
     pub fn csv_path(&self, settings: &Settings) -> PathBuf {
@@ -131,6 +151,7 @@ impl Case {
             .join(match self.protocol {
                 Protocol::Fri => "FRI",
                 Protocol::Stir => "STIR",
+                Protocol::Whir => "WHIR",
             })
             .join(format!("{}.csv", self.field.name()))
     }
@@ -141,35 +162,42 @@ pub struct Matrix {
     pub settings: Settings,
     #[arg(long, value_enum, value_delimiter = ',', default_value = "fri,stir")]
     pub protocols: Vec<Protocol>,
-    #[arg(
-        long,
-        value_enum,
-        value_delimiter = ',',
-        default_value = "goldilocks,f128"
-    )]
+    /// Default: Goldilocks for every protocol.
+    #[arg(long, value_enum, value_delimiter = ',')]
     pub fields: Vec<Field>,
-    /// Inclusive range of coefficient-count exponents.
-    #[arg(long, default_value = "20..30")]
-    pub log_n: String,
+    /// Inclusive input-size exponents. Default: WHIR 20..28, FRI/STIR 20..30.
+    #[arg(long)]
+    pub log_n: Option<String>,
     #[arg(long, value_delimiter = ',', default_value = "1,32")]
     pub threads: Vec<usize>,
 }
 impl Matrix {
     pub fn cases(&self) -> Result<Vec<Case>> {
         self.settings.validate()?;
-        let (lo, hi) = self
-            .log_n
-            .split_once("..")
-            .unwrap_or((&self.log_n, &self.log_n));
-        let (lo, hi) = (lo.parse::<usize>()?, hi.parse::<usize>()?);
-        if !(20..=30).contains(&lo) || !(lo..=30).contains(&hi) {
-            return Err(
-                "log_n must be a single exponent or ascending inclusive range within 20..30".into(),
-            );
-        }
         let mut result = Vec::new();
         for &protocol in &self.protocols {
-            for &field in &self.fields {
+            let (lo, hi) = if let Some(range) = &self.log_n {
+                let (lo, hi) = range.split_once("..").unwrap_or((range, range));
+                (lo.parse::<usize>()?, hi.parse::<usize>()?)
+            } else {
+                (20, protocol.max_log_n())
+            };
+            if !(20..=protocol.max_log_n()).contains(&lo)
+                || !(lo..=protocol.max_log_n()).contains(&hi)
+            {
+                return Err(format!(
+                    "{} log_n must be a single exponent or ascending inclusive range within 20..{}",
+                    protocol.name(),
+                    protocol.max_log_n()
+                )
+                .into());
+            }
+            let fields = if self.fields.is_empty() {
+                protocol.fields()
+            } else {
+                &self.fields
+            };
+            for &field in fields {
                 for log_n in lo..=hi {
                     for &threads in &self.threads {
                         let case = Case {

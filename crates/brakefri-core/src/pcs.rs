@@ -1,4 +1,5 @@
-//! Standalone coefficient-input Section 3 PCS. Proofs contain only protocol messages.
+//! Standalone coefficient-input Section 3 PCS. Typed proofs contain protocol messages
+//! and a 32-byte trusted-context digest; v3 encoding also prefixes one version byte.
 use brakefri_primitives::{
     dft::{DftError, NaturalOrderDft, padded_coefficient_blocks},
     hash::Digest,
@@ -10,7 +11,7 @@ use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
 use thiserror::Error;
 
-use crate::{BrakeParams, M, Q};
+use crate::BrakeParams;
 
 #[cfg(test)]
 #[path = "pcs_tests.rs"]
@@ -36,6 +37,8 @@ pub struct ScalarOpening<K> {
 
 #[derive(Clone, Debug)]
 pub struct BrakeProof<P: FieldProfile> {
+    /// Fingerprint of the complete trusted v3 public context.
+    pub context_id: Digest,
     pub block_values: Vec<P::Base>,
     pub rounds: Vec<Round<P::Challenge>>,
     /// Ascending coefficients, padded to the public terminal degree bound.
@@ -106,7 +109,7 @@ impl<P: FieldProfile> BrakeFri<P> {
             return Err(PcsError::ProfileMismatch);
         }
         Ok(Self {
-            initial_mmcs: CanonicalMmcs::new(LeafKind::Base, M)?,
+            initial_mmcs: CanonicalMmcs::new(LeafKind::Base, params.m())?,
             scalar_mmcs: CanonicalMmcs::new(LeafKind::Challenge, 1)?,
             params,
             dft: NaturalOrderDft::default(),
@@ -119,18 +122,19 @@ impl<P: FieldProfile> BrakeFri<P> {
 
     pub fn commit(
         &self,
-        coefficients: Vec<P::Base>,
+        mut coefficients: Vec<P::Base>,
         execution: &ExecutionContext,
     ) -> Result<(Commitment, ProverData<P>), PcsError> {
-        if coefficients.len() != self.params.n() {
+        if coefficients.len() > self.params.d() {
             return Err(PcsError::CoefficientCount {
-                expected: self.params.n(),
+                expected: self.params.d(),
                 actual: coefficients.len(),
             });
         }
+        coefficients.resize(self.params.d(), P::Base::ZERO);
         let padded = padded_coefficient_blocks(
             &coefficients,
-            M,
+            self.params.m(),
             self.params.k(),
             self.params.domain_size(),
         )?;
@@ -157,41 +161,42 @@ impl<P: FieldProfile> BrakeFri<P> {
         if state.params != self.params {
             return Err(PcsError::StateMismatch);
         }
-        let blocks: Vec<_> = state
-            .coefficients
-            .chunks_exact(self.params.k())
-            .map(|block| horner(block.iter().copied(), z))
+        let z0 = z.exp_u64(self.params.m() as u64);
+        let blocks: Vec<_> = (0..self.params.m())
+            .map(|i| {
+                horner(
+                    state
+                        .coefficients
+                        .iter()
+                        .skip(i)
+                        .step_by(self.params.m())
+                        .copied(),
+                    z0,
+                )
+            })
             .collect();
-        let y = reconstruct(&blocks, z, self.params.k());
+        let y = reconstruct(&blocks, z);
         let mut transcript = self.start(&state.commitment, z, y, &blocks)?;
-        let weights: Vec<_> = (0..M).map(|_| transcript.sample_challenge()).collect();
-        let mut coefficients = vec![P::Challenge::ZERO; self.params.k()];
-        // Sequential coefficient tiles bound the active destination working set.
-        for start in (0..self.params.k()).step_by(32) {
-            let end = (start + 32).min(self.params.k());
-            for (block, &weight) in state
-                .coefficients
-                .chunks_exact(self.params.k())
-                .zip(&weights)
-            {
-                for a in start..end {
-                    coefficients[a] += weight * block[a];
-                }
-            }
-        }
+        let weights = power_weights(transcript.sample_challenge(), self.params.m());
+        let coefficients: Vec<_> = state
+            .coefficients
+            .chunks_exact(self.params.m())
+            .map(|row| combine::<P>(row, &weights))
+            .collect();
+        let mut coefficients = coefficients;
         let mut initial_word = Some(
             state
                 .initial
                 .matrix()
                 .values
-                .chunks_exact(M)
+                .chunks_exact(self.params.m())
                 .map(|row| combine::<P>(row, &weights))
                 .collect::<Vec<_>>(),
         );
         let mut layers: Vec<MatrixProverData<P::Challenge>> =
             Vec::with_capacity(self.params.rounds());
         let mut rounds = Vec::with_capacity(self.params.rounds());
-        let mut point = z;
+        let mut point = z.exp_u64(self.params.m() as u64);
         let mut claim = combine::<P>(&blocks, &weights);
         let mut omega = P::Base::two_adic_generator(self.params.log_domain_size());
         for j in 0..self.params.rounds() {
@@ -272,6 +277,7 @@ impl<P: FieldProfile> BrakeFri<P> {
         Ok(Opening {
             y,
             proof: BrakeProof {
+                context_id: self.params.transcript_context().identifier()?,
                 block_values: blocks,
                 rounds,
                 terminal_coefficients,
@@ -293,9 +299,9 @@ impl<P: FieldProfile> BrakeFri<P> {
     ) -> Result<(), PcsError> {
         self.validate_shape(proof)?;
         let mut transcript = self.start(commitment, z, y, &proof.block_values)?;
-        let weights: Vec<_> = (0..M).map(|_| transcript.sample_challenge()).collect();
+        let weights = power_weights(transcript.sample_challenge(), self.params.m());
         let mut claim = combine::<P>(&proof.block_values, &weights);
-        let mut point = z;
+        let mut point = z.exp_u64(self.params.m() as u64);
         let mut gammas = Vec::with_capacity(self.params.rounds());
         for (j, round) in proof.rounds.iter().enumerate() {
             transcript.observe_round(j, round.even_value, round.odd_value)?;
@@ -349,7 +355,7 @@ impl<P: FieldProfile> BrakeFri<P> {
                 return self.initial_mmcs.verify_multi_batch(
                     &commitment.root,
                     Dimensions {
-                        width: M,
+                        width: self.params.m(),
                         height: self.params.domain_size(),
                     },
                     &sets[0],
@@ -429,11 +435,11 @@ impl<P: FieldProfile> BrakeFri<P> {
         y: P::Base,
         blocks: &[P::Base],
     ) -> Result<Transcript<P>, PcsError> {
-        let mut transcript = Transcript::new(self.params.log_n())?;
+        let mut transcript = Transcript::new(self.params.transcript_context())?;
         transcript.observe_statement(&commitment.root, z);
         transcript.observe_claim(y);
         transcript.observe_block_values(blocks)?;
-        if reconstruct(blocks, z, self.params.k()) != y {
+        if reconstruct(blocks, z) != y {
             return Err(PcsError::Claim);
         }
         Ok(transcript)
@@ -452,7 +458,8 @@ pub(crate) fn opening_bounds(params: &BrakeParams, j: usize) -> Result<(usize, u
         .log_domain_size()
         .checked_sub(j)
         .ok_or(PcsError::Shape("depth"))?;
-    let count = Q
+    let count = params
+        .num_queries()
         .checked_mul(2)
         .ok_or(PcsError::Shape("query bound"))?
         .min(height);
@@ -472,7 +479,10 @@ pub(crate) fn validate_proof_shape<P: FieldProfile>(
     if params.profile() != P::PROFILE {
         return Err(PcsError::ProfileMismatch);
     }
-    if proof.block_values.len() != M
+    if proof.context_id != params.transcript_context().identifier()? {
+        return Err(PcsError::StateMismatch);
+    }
+    if proof.block_values.len() != params.m()
         || proof.terminal_coefficients.len() != params.terminal_coefficient_count()
         || proof.rounds.len() != params.rounds()
         || proof.scalar_openings.len() != params.rounds() - 1
@@ -487,7 +497,11 @@ pub(crate) fn validate_proof_shape<P: FieldProfile>(
         0,
         proof.initial_opening.rows.len(),
         proof.initial_opening.proof.sibling_hashes.len(),
-    )? || proof.initial_opening.rows.iter().any(|row| row.len() != M)
+    )? || proof
+        .initial_opening
+        .rows
+        .iter()
+        .any(|row| row.len() != params.m())
     {
         return Err(PcsError::Shape("initial opening"));
     }
@@ -508,13 +522,12 @@ fn horner<F: Field>(coefficients: impl DoubleEndedIterator<Item = F>, point: F) 
         .rev()
         .fold(F::ZERO, |value, coefficient| value * point + coefficient)
 }
-fn reconstruct<F: Field>(blocks: &[F], z: F, k: usize) -> F {
-    let step = z.exp_u64(k as u64);
+fn reconstruct<F: Field>(blocks: &[F], z: F) -> F {
     let mut weight = F::ONE;
     let mut y = F::ZERO;
     for &value in blocks {
         y += weight * value;
-        weight *= step;
+        weight *= z;
     }
     y
 }
@@ -568,6 +581,17 @@ fn query_sets(params: &BrakeParams, starts: &[usize]) -> Vec<Vec<usize>> {
             set.sort_unstable();
             set.dedup();
             set
+        })
+        .collect()
+}
+
+fn power_weights<K: Field>(alpha: K, count: usize) -> Vec<K> {
+    let mut power = K::ONE;
+    (0..count)
+        .map(|_| {
+            let result = power;
+            power *= alpha;
+            result
         })
         .collect()
 }

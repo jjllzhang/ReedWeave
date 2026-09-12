@@ -1,6 +1,5 @@
 //! Canonical coordinates shared by the transcript, Merkle leaves, and proof codecs.
 
-pub use p3_f128_adapter::F128;
 use p3_field::{BasedVectorSpace, Field, PackedValue, PrimeField64};
 pub use p3_goldilocks::Goldilocks;
 use thiserror::Error;
@@ -56,41 +55,34 @@ impl CanonicalField for Goldilocks {
     }
 }
 
-impl CanonicalField for GoldilocksQuadratic {
-    type Bytes = [u8; 16];
-    const PROFILE_ID: u8 = 1;
-    const COORDINATE_COUNT: usize = 2;
-    const COORDINATE_BYTES: usize = 8;
-
-    fn to_canonical_bytes(&self) -> Self::Bytes {
-        let coordinates: &[Goldilocks] = self.as_basis_coefficients_slice();
-        let mut bytes = [0; 16];
-        bytes[..8].copy_from_slice(&coordinates[0].to_canonical_bytes());
-        bytes[8..].copy_from_slice(&coordinates[1].to_canonical_bytes());
-        bytes
-    }
-
-    fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalEncodingError> {
-        let bytes = fixed::<16>(bytes)?;
-        let coordinates = [
-            Goldilocks::from_canonical_bytes(&bytes[..8])?,
-            Goldilocks::from_canonical_bytes(&bytes[8..])?,
-        ];
-        Ok(Self::from_basis_coefficients_fn(|i| coordinates[i]))
-    }
+macro_rules! extension_encoding {
+    ($field:ty, $degree:expr, $bytes:expr) => {
+        impl CanonicalField for $field {
+            type Bytes = [u8; $bytes];
+            const PROFILE_ID: u8 = 1;
+            const COORDINATE_COUNT: usize = $degree;
+            const COORDINATE_BYTES: usize = 8;
+            fn to_canonical_bytes(&self) -> Self::Bytes {
+                let coordinates: &[Goldilocks] = self.as_basis_coefficients_slice();
+                let mut bytes = [0; $bytes];
+                for (chunk, coordinate) in bytes.chunks_exact_mut(8).zip(coordinates) {
+                    chunk.copy_from_slice(&coordinate.to_canonical_bytes());
+                }
+                bytes
+            }
+            fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalEncodingError> {
+                let bytes = fixed::<$bytes>(bytes)?;
+                let mut coordinates = [Goldilocks::new(0); $degree];
+                for (coordinate, chunk) in coordinates.iter_mut().zip(bytes.chunks_exact(8)) {
+                    *coordinate = Goldilocks::from_canonical_bytes(chunk)?;
+                }
+                Ok(Self::from_basis_coefficients_fn(|i| coordinates[i]))
+            }
+        }
+    };
 }
-
-impl CanonicalField for F128 {
-    type Bytes = [u8; 16];
-    const PROFILE_ID: u8 = 2;
-    const COORDINATE_COUNT: usize = 1;
-    const COORDINATE_BYTES: usize = 16;
-
-    fn to_canonical_bytes(&self) -> Self::Bytes {
-        self.to_le_bytes()
-    }
-
-    fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CanonicalEncodingError> {
-        F128::from_le_bytes(fixed(bytes)?).map_err(|_| CanonicalEncodingError::NonCanonical)
-    }
-}
+pub type GoldilocksCubic = p3_field::extension::CubicTrinomialExtensionField<Goldilocks>;
+pub type GoldilocksQuintic = p3_field::extension::BinomialExtensionField<Goldilocks, 5>;
+extension_encoding!(GoldilocksQuadratic, 2, 16);
+extension_encoding!(GoldilocksCubic, 3, 24);
+extension_encoding!(GoldilocksQuintic, 5, 40);

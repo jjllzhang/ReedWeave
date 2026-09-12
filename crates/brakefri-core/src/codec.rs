@@ -1,4 +1,5 @@
-//! Protocol-only Postcard codecs. See `docs/wire-format.md` for ordering and bounds.
+//! V3 Postcard proofs: one version byte and a 32-byte trusted-context digest,
+//! followed by bounded protocol messages. Both framing fields count toward proof size.
 use std::{fmt, marker::PhantomData};
 
 use brakefri_primitives::{
@@ -16,7 +17,7 @@ use serde::{
 use thiserror::Error;
 
 use crate::{
-    BrakeFri, BrakeParams, BrakeProof, Commitment, M, PcsError, Round, ScalarOpening,
+    BrakeFri, BrakeParams, BrakeProof, Commitment, PcsError, Round, ScalarOpening,
     pcs::{boundary_bound, opening_bounds, validate_proof_shape},
 };
 
@@ -56,7 +57,8 @@ pub fn decode_commitment(bytes: &[u8]) -> Result<Commitment, DecodeError> {
     })
 }
 
-/// Encode the same typed proof accepted by `BrakeFri::verify`; no statement or context.
+/// Encode the same typed proof accepted by `BrakeFri::verify`, including v3 framing
+/// and the trusted-context identifier, but not the public statement or parameter values.
 /// Shape validation here does not establish cryptographic validity.
 pub fn encode_eval_proof<P: FieldProfile>(
     params: &BrakeParams,
@@ -64,6 +66,8 @@ pub fn encode_eval_proof<P: FieldProfile>(
 ) -> Result<Vec<u8>, EncodeError> {
     validate_proof_shape(params, proof)?;
     let wire = WireProof {
+        version: 3,
+        context_id: proof.context_id,
         block_values: Fields(&proof.block_values),
         rounds: proof.rounds.iter().map(WireRound::from).collect(),
         terminal_coefficients: Fields(&proof.terminal_coefficients),
@@ -99,8 +103,8 @@ pub fn decode_eval_proof<P: FieldProfile>(
         return Err(DecodeError::TrailingBytes);
     }
     // Postcard accepts some overlong integer length representations. Require the
-    // unique encoding as well as canonical coordinates. This pass is bounded and
-    // belongs to decode/verify time, not an untimed preprocessing step.
+    // unique encoding as well as canonical coordinates. This bounded transport
+    // check is retained outside the benchmark's core-v1 typed-verification timer.
     if encode_eval_proof(params, &proof)? != bytes {
         return Err(DecodeError::NonCanonicalFraming);
     }
@@ -121,7 +125,8 @@ pub enum VerifyEncodedError {
 
 impl<P: FieldProfile> BrakeFri<P> {
     /// Decode and verify the two actual transport buffers, returning their checked
-    /// total byte length only after success. Call inside the verification timer.
+    /// total byte length only after success. This is the end-to-end byte API;
+    /// core-v1 benchmarks decode first and time the complete typed verifier.
     /// The expected root and intended (z, y) must come from the caller's statement.
     pub fn verify_encoded(
         &self,
@@ -144,8 +149,8 @@ impl<P: FieldProfile> BrakeFri<P> {
     }
 }
 
-// Fixed coordinate tuples: base fields have one coordinate; the quadratic has
-// (constant, u). Arrays and tuples have no length prefix in Postcard. Never use
+// Fixed tuples of 1, 2, 3, or 5 little-endian Goldilocks coordinates in ascending
+// basis order. Arrays and tuples have no length prefix in Postcard. Never use
 // the upstream field's integer Serde implementation here.
 struct Coordinate<F>(F);
 impl<F: CanonicalField> Serialize for Coordinate<F> {
@@ -156,9 +161,6 @@ impl<F: CanonicalField> Serialize for Coordinate<F> {
             match F::COORDINATE_BYTES {
                 8 => tuple.serialize_element(
                     &<[u8; 8]>::try_from(coordinate).map_err(serde::ser::Error::custom)?,
-                )?,
-                16 => tuple.serialize_element(
-                    &<[u8; 16]>::try_from(coordinate).map_err(serde::ser::Error::custom)?,
                 )?,
                 _ => return Err(serde::ser::Error::custom("unsupported coordinate width")),
             }
@@ -175,18 +177,22 @@ impl<'de, F: CanonicalField> Deserialize<'de> for Coordinate<F> {
                 f.write_str("fixed canonical coordinates")
             }
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut bytes = [0u8; 16];
-                if F::BYTE_WIDTH > bytes.len() {
-                    return Err(A::Error::custom("unsupported field width"));
+                // Width comes from the selected field, never the wire. Check even
+                // trait-provided dimensions before slicing the bounded stack scratch.
+                if F::COORDINATE_BYTES != 8
+                    || !matches!(F::COORDINATE_COUNT, 1 | 2 | 3 | 5)
+                    || F::COORDINATE_COUNT.checked_mul(8) != Some(F::BYTE_WIDTH)
+                {
+                    return Err(A::Error::custom("unsupported field dimensions"));
                 }
-                for chunk in bytes[..F::BYTE_WIDTH].chunks_exact_mut(F::COORDINATE_BYTES) {
-                    match F::COORDINATE_BYTES {
-                        8 => chunk.copy_from_slice(&next::<_, [u8; 8]>(&mut seq)?),
-                        16 => chunk.copy_from_slice(&next::<_, [u8; 16]>(&mut seq)?),
-                        _ => return Err(A::Error::custom("unsupported coordinate width")),
-                    }
+                let mut scratch = [0u8; 40];
+                let bytes = scratch
+                    .get_mut(..F::BYTE_WIDTH)
+                    .ok_or_else(|| A::Error::custom("unsupported field width"))?;
+                for chunk in bytes.chunks_exact_mut(8) {
+                    chunk.copy_from_slice(&next::<_, [u8; 8]>(&mut seq)?);
                 }
-                F::from_canonical_bytes(&bytes[..F::BYTE_WIDTH])
+                F::from_canonical_bytes(bytes)
                     .map(Coordinate)
                     .map_err(A::Error::custom)
             }
@@ -219,6 +225,8 @@ impl<F: CanonicalField> Serialize for Rows<'_, F> {
 #[derive(Serialize)]
 #[serde(bound(serialize = "F: CanonicalField, K: CanonicalField"))]
 struct WireProof<'a, F, K> {
+    version: u8,
+    context_id: Digest,
     block_values: Fields<'a, F>,
     rounds: Vec<WireRound<K>>,
     terminal_coefficients: Fields<'a, K>,
@@ -316,9 +324,12 @@ where
             return Err(A::Error::custom("vector length outside public bounds"));
         }
         let mut values = Vec::new();
-        values.try_reserve_exact(count).map_err(A::Error::custom)?;
+        // Do not reserve an attacker-announced large vector on truncated input.
+        // Grow only after each element has successfully decoded.
         for index in 0..count {
-            values.push(seeded(&mut seq, (self.element)(index))?);
+            let value = seeded(&mut seq, (self.element)(index))?;
+            values.try_reserve(1).map_err(A::Error::custom)?;
+            values.push(value);
         }
         Ok(values)
     }
@@ -376,7 +387,7 @@ struct ProofSeed<'a, P>(&'a BrakeParams, PhantomData<P>);
 impl<'de, P: FieldProfile> DeserializeSeed<'de> for ProofSeed<'_, P> {
     type Value = BrakeProof<P>;
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        d.deserialize_tuple(5, self)
+        d.deserialize_tuple(7, self)
     }
 }
 impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
@@ -386,7 +397,20 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let params = self.0;
-        let block_values = seeded(&mut seq, fields::<P::Base>(M, M))?;
+        let version: u8 = next(&mut seq)?;
+        if version != 3 {
+            return Err(A::Error::custom("unsupported proof version"));
+        }
+        let context_id: Digest = next(&mut seq)?;
+        if context_id
+            != params
+                .transcript_context()
+                .identifier()
+                .map_err(A::Error::custom)?
+        {
+            return Err(A::Error::custom("public context mismatch"));
+        }
+        let block_values = seeded(&mut seq, fields::<P::Base>(params.m(), params.m()))?;
         let rounds = seeded(
             &mut seq,
             Sequence {
@@ -416,7 +440,7 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
                 values: Sequence {
                     min: 1,
                     max,
-                    element: |_| fields::<P::Base>(M, M),
+                    element: |_| fields::<P::Base>(params.m(), params.m()),
                 },
                 depth,
             },
@@ -442,6 +466,7 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
         .map(|(values, proof)| ScalarOpening { values, proof })
         .collect();
         Ok(BrakeProof {
+            context_id,
             block_values,
             rounds,
             terminal_coefficients,

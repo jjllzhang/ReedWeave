@@ -1,10 +1,25 @@
 use super::*;
-use brakefri_primitives::transcript::{F128Profile, GoldilocksProfile};
+use crate::{BaseField, PublicParams};
+use brakefri_primitives::transcript::{
+    GoldilocksBaseProfile, GoldilocksCubicProfile, GoldilocksProfile, GoldilocksQuinticProfile,
+};
+fn params<P: FieldProfile>(old_log: usize) -> BrakeParams {
+    BrakeParams::new(PublicParams {
+        base_field: BaseField::Goldilocks,
+        extension_degree: P::PROFILE.extension_degree(),
+        log_d: old_log - 10,
+        m: 4,
+        blowup: 2,
+        terminal_coefficients: 2,
+        num_queries: 19,
+    })
+    .unwrap()
+}
 
 fn algebra<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let dft = NaturalOrderDft::<P::Base>::default();
-    let mut transcript = Transcript::<P>::new(14).unwrap();
+    let mut transcript = Transcript::<P>::new(params::<P>(14).transcript_context()).unwrap();
     for log_k in 1..=5 {
         let k = 1 << log_k;
         let coefficients: Vec<_> = (0..k).map(|_| transcript.sample_challenge()).collect();
@@ -60,7 +75,9 @@ fn algebra<P: FieldProfile>() {
 #[test]
 fn coefficient_word_folds_match_direct_polynomials_and_both_signs() {
     algebra::<GoldilocksProfile>();
-    algebra::<F128Profile>();
+    algebra::<GoldilocksBaseProfile>();
+    algebra::<GoldilocksCubicProfile>();
+    algebra::<GoldilocksQuinticProfile>();
 }
 
 /// Small reference prover: re-evaluate each folded polynomial directly. The production
@@ -74,34 +91,46 @@ fn reference<P: FieldProfile>(
     corrupt_layer: Option<usize>,
 ) -> (Opening<P>, Vec<usize>) {
     let k = pcs.params.k();
-    let blocks: Vec<_> = state
-        .coefficients
-        .chunks_exact(k)
-        .map(|block| {
-            block
-                .iter()
-                .enumerate()
-                .map(|(a, &c)| c * z.exp_u64(a as u64))
+    let m = pcs.params.m();
+    let z0 = z.exp_u64(m as u64);
+    let blocks: Vec<P::Base> = (0..m)
+        .map(|i| {
+            (0..k)
+                .map(|a| state.coefficients[m * a + i] * z0.exp_u64(a as u64))
                 .sum()
         })
         .collect();
-    let y: P::Base = blocks
+    let y: P::Base = state
+        .coefficients
         .iter()
         .enumerate()
-        .map(|(i, &v)| v * z.exp_u64((i * k) as u64))
+        .map(|(a, &c)| c * z.exp_u64(a as u64))
         .sum();
-    let mut transcript = Transcript::<P>::new(pcs.params.log_n()).unwrap();
+    let mut transcript = Transcript::<P>::new(pcs.params.transcript_context()).unwrap();
     transcript.observe_statement(&state.commitment.root, z);
     transcript.observe_claim(y);
     transcript.observe_block_values(&blocks).unwrap();
-    let r: Vec<_> = (0..M).map(|_| transcript.sample_challenge()).collect();
-    // Catch a controller using a fixed r_0 or powers of one seed.
-    assert_ne!(r[0], P::Challenge::ONE);
-    assert_ne!(r[2], r[1].square());
+    let alpha = transcript.sample_challenge();
+    let r: Vec<_> = (0..m).map(|i| alpha.exp_u64(i as u64)).collect();
+    assert_eq!(r[0], P::Challenge::ONE);
+    if m > 2 {
+        assert_eq!(r[2], r[1].square());
+    }
     let mut coefficients: Vec<P::Challenge> = (0..k)
-        .map(|a| (0..M).map(|i| r[i] * state.coefficients[i * k + a]).sum())
+        .map(|a| (0..m).map(|i| r[i] * state.coefficients[m * a + i]).sum())
         .collect();
-    let mut point = z;
+    // Independently check every initial component evaluation, not production DFT layout.
+    let root = P::Base::two_adic_generator(pcs.params.log_domain_size());
+    for t in 0..pcs.params.domain_size() {
+        let x = root.exp_u64(t as u64);
+        for i in 0..m {
+            let expected: P::Base = (0..k)
+                .map(|a| state.coefficients[m * a + i] * x.exp_u64(a as u64))
+                .sum();
+            assert_eq!(state.initial.matrix().values[t * m + i], expected);
+        }
+    }
+    let mut point = z0;
     let mut rounds = Vec::new();
     let mut layers = Vec::new();
     for j in 0..pcs.params.rounds() {
@@ -195,6 +224,7 @@ fn reference<P: FieldProfile>(
         Opening {
             y,
             proof: BrakeProof {
+                context_id: pcs.params.transcript_context().identifier().unwrap(),
                 block_values: blocks,
                 rounds,
                 terminal_coefficients,
@@ -208,9 +238,9 @@ fn reference<P: FieldProfile>(
 
 fn interoperability<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(P::PROFILE, 15).unwrap();
+    let params = params::<P>(15);
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
-    let coefficients: Vec<_> = (0..params.n())
+    let coefficients: Vec<_> = (0..params.d())
         .map(|i| P::Base::from_usize(i + 3))
         .collect();
     let original_allocation = coefficients.as_ptr();
@@ -219,7 +249,7 @@ fn interoperability<P: FieldProfile>() {
     let z = P::Base::ZERO;
     let production = pcs.prove(&state, z, &execution).unwrap();
     let (reference, starts) = reference(&pcs, &state, z, &execution, None);
-    assert_eq!(starts.len(), Q);
+    assert_eq!(starts.len(), params.num_queries());
     assert!(starts.iter().any(|&t| t >= params.domain_size() / 2));
     let mut unique = starts.clone();
     unique.sort_unstable();
@@ -263,7 +293,7 @@ fn interoperability<P: FieldProfile>() {
     // At z=0 this mutation preserves the terminal scalar evaluation. It must
     // still fail reconstruction of the complete committed terminal oracle.
     let mut forged = reference.proof.clone();
-    forged.terminal_coefficients[127] += P::Challenge::ONE;
+    forged.terminal_coefficients[1] += P::Challenge::ONE;
     assert!(matches!(
         pcs.verify(&commitment, z, reference.y, &forged, &execution),
         Err(PcsError::Terminal)
@@ -287,7 +317,9 @@ fn interoperability<P: FieldProfile>() {
 #[test]
 fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
     interoperability::<GoldilocksProfile>();
-    interoperability::<F128Profile>();
+    interoperability::<GoldilocksBaseProfile>();
+    interoperability::<GoldilocksCubicProfile>();
+    interoperability::<GoldilocksQuinticProfile>();
 }
 
 /// A degree-k monomial in one initial column folds consistently through every
@@ -295,23 +327,23 @@ fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
 /// This tests the final local equality after all other verification gates pass.
 fn bad_final_fold<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
-    let params = BrakeParams::new(P::PROFILE, 16).unwrap();
+    let params = params::<P>(16);
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
     let omega = P::Base::two_adic_generator(params.log_domain_size());
-    let mut matrix = vec![P::Base::ZERO; params.domain_size() * M];
+    let mut matrix = vec![P::Base::ZERO; params.domain_size() * params.m()];
     for t in 0..params.domain_size() {
-        matrix[t * M] = omega.exp_u64((t * params.k()) as u64);
+        matrix[t * params.m()] = omega.exp_u64((t * params.k()) as u64);
     }
     let (root, initial) = pcs
         .initial_mmcs
-        .commit(RowMajorMatrix::new(matrix, M), &execution)
+        .commit(RowMajorMatrix::new(matrix, params.m()), &execution)
         .unwrap();
     let commitment = Commitment { root };
-    let blocks = vec![P::Base::ZERO; M];
+    let blocks = vec![P::Base::ZERO; params.m()];
     let mut transcript = pcs
         .start(&commitment, P::Base::ZERO, P::Base::ZERO, &blocks)
         .unwrap();
-    let weights: Vec<_> = (0..M).map(|_| transcript.sample_challenge()).collect();
+    let weights = power_weights(transcript.sample_challenge(), params.m());
     assert_ne!(weights[0], P::Challenge::ZERO);
     let mut rounds = Vec::new();
     let mut layers = Vec::new();
@@ -352,11 +384,12 @@ fn bad_final_fold<P: FieldProfile>() {
         ])
         .unwrap();
     let starts = transcript.sample_queries();
-    assert_eq!(starts.len(), Q);
+    assert_eq!(starts.len(), params.num_queries());
     assert!(starts.iter().any(|&t| t < params.domain_size() / 2));
     assert!(starts.iter().any(|&t| t >= params.domain_size() / 2));
     let sets = query_sets(&params, &starts);
     let proof = BrakeProof {
+        context_id: params.transcript_context().identifier().unwrap(),
         block_values: blocks,
         rounds,
         terminal_coefficients: vec![P::Challenge::ZERO; params.terminal_coefficient_count()],
@@ -386,18 +419,20 @@ fn bad_final_fold<P: FieldProfile>() {
 #[test]
 fn authenticated_oracles_must_satisfy_the_final_fold() {
     bad_final_fold::<GoldilocksProfile>();
-    bad_final_fold::<F128Profile>();
+    bad_final_fold::<GoldilocksBaseProfile>();
+    bad_final_fold::<GoldilocksCubicProfile>();
+    bad_final_fold::<GoldilocksQuinticProfile>();
 }
 
 #[test]
 fn nonempty_boundaries_and_exact_upstream_authentication() {
     let execution = ExecutionContext::new(2).unwrap();
-    let params = BrakeParams::new(GoldilocksProfile::PROFILE, 18).unwrap();
+    let params = params::<GoldilocksProfile>(18);
     let pcs = BrakeFri::<GoldilocksProfile>::new(params.clone()).unwrap();
     type F = <GoldilocksProfile as FieldProfile>::Base;
     let (commitment, state) = pcs
         .commit(
-            (0..params.n()).map(|i| F::from_usize(i + 1)).collect(),
+            (0..params.d()).map(|i| F::from_usize(i + 1)).collect(),
             &execution,
         )
         .unwrap();
@@ -430,9 +465,7 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
     let mut transcript = pcs
         .start(&commitment, F::TWO, opening.y, &opening.proof.block_values)
         .unwrap();
-    for _ in 0..M {
-        let _ = transcript.sample_challenge();
-    }
+    let _ = transcript.sample_challenge();
     for (j, round) in opening.proof.rounds.iter().enumerate() {
         transcript
             .observe_round(j, round.even_value, round.odd_value)
@@ -470,7 +503,7 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
             .verify_batch(
                 &commitment.root,
                 Dimensions {
-                    width: M,
+                    width: params.m(),
                     height: params.domain_size(),
                 },
                 index,
@@ -479,4 +512,56 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
             )
             .unwrap();
     }
+}
+
+#[test]
+fn reference_algebra_across_geometries_points_and_short_inputs() {
+    fn check<P: FieldProfile>() {
+        let execution = ExecutionContext::new(1).unwrap();
+        for (log_d, m, blowup, kt, q) in [
+            (1, 1, 2, 1, 1),
+            (4, 1, 4, 1, 70),
+            (5, 4, 2, 2, 19),
+            (6, 8, 8, 4, 3),
+        ] {
+            let params = BrakeParams::new(PublicParams {
+                base_field: BaseField::Goldilocks,
+                extension_degree: P::PROFILE.extension_degree(),
+                log_d,
+                m,
+                blowup,
+                terminal_coefficients: kt,
+                num_queries: q,
+            })
+            .unwrap();
+            let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
+            for len in [0, params.d() - 1] {
+                let (root, state) = pcs
+                    .commit(
+                        (0..len).map(|i| P::Base::from_usize(i + 7)).collect(),
+                        &execution,
+                    )
+                    .unwrap();
+                for point in [
+                    P::Base::ZERO,
+                    P::Base::from_u8(3),
+                    P::Base::two_adic_generator(params.log_domain_size()),
+                ] {
+                    let production = pcs.prove(&state, point, &execution).unwrap();
+                    let (reference, _) = reference(&pcs, &state, point, &execution, None);
+                    assert_eq!(production.y, reference.y);
+                    assert_eq!(
+                        crate::codec::encode_eval_proof(&params, &production.proof).unwrap(),
+                        crate::codec::encode_eval_proof(&params, &reference.proof).unwrap()
+                    );
+                    pcs.verify(&root, point, reference.y, &reference.proof, &execution)
+                        .unwrap();
+                }
+            }
+        }
+    }
+    check::<GoldilocksBaseProfile>();
+    check::<GoldilocksProfile>();
+    check::<GoldilocksCubicProfile>();
+    check::<GoldilocksQuinticProfile>();
 }

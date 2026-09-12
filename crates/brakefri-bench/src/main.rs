@@ -6,7 +6,7 @@ mod runner;
 mod tests;
 
 use clap::Parser;
-use config::{Case, Cli, Command, Config, Settings, field_name};
+use config::{Case, Cli, Command, Config, Settings};
 use resources::{Available, Estimate};
 use std::{
     process::{Command as Process, ExitCode},
@@ -29,17 +29,14 @@ fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Run(run) => {
             let config = Config::load(&run.common)?;
-            let case = Case {
-                field: run.field,
-                log_n: run.log_n,
-                threads: run.threads,
-            };
-            case.params()?;
-            let settings = config.settings(&run.common);
+            let threads = run.threads.map(|t| vec![t]);
+            let case =
+                config::cases(config.as_ref(), &run.common, threads.as_deref(), false)?.remove(0);
+            let settings = config::settings(config.as_ref(), &run.common)?;
             if run.worker {
                 runner::run(&case, &settings)
             } else {
-                isolated(&case, &settings, &run.common.config)
+                isolated(&case, &settings)
             }
         }
         Command::Preflight(matrix) => execute_matrix(matrix, false),
@@ -48,12 +45,17 @@ fn execute(cli: Cli) -> Result<()> {
 }
 fn execute_matrix(matrix: config::Matrix, measure: bool) -> Result<()> {
     let config = Config::load(&matrix.common)?;
-    let cases = config.cases(&matrix)?;
-    let settings = config.settings(&matrix.common);
+    let cases = config::cases(
+        config.as_ref(),
+        &matrix.common,
+        matrix.threads.as_deref(),
+        true,
+    )?;
+    let settings = config::settings(config.as_ref(), &matrix.common)?;
     let mut failures = 0;
     for case in cases {
         let result = if measure {
-            isolated(&case, &settings, &matrix.common.config)
+            isolated(&case, &settings)
         } else {
             let available = Available::detect();
             let estimate = Estimate::new(&case)?;
@@ -79,7 +81,7 @@ fn execute_matrix(matrix: config::Matrix, measure: bool) -> Result<()> {
         Ok(())
     }
 }
-fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Result<()> {
+fn isolated(case: &Case, settings: &Settings) -> Result<()> {
     let result = (|| -> Result<()> {
         let available = Available::detect();
         let estimate = Estimate::new(case)?;
@@ -92,12 +94,21 @@ fn isolated(case: &Case, settings: &Settings, config: &std::path::Path) -> Resul
         command
             .arg("run")
             .arg("--worker")
-            .arg("--config")
-            .arg(config)
-            .arg("--field")
-            .arg(field_name(case.field))
-            .arg("--log-n")
-            .arg(case.log_n.to_string())
+            // Fully resolved pp, never a config path whose defaults could lose an overlay.
+            .arg("--base-field")
+            .arg(case.pp.base_field.to_string())
+            .arg("--extension-degree")
+            .arg(case.pp.extension_degree.to_string())
+            .arg("--log-d")
+            .arg(case.pp.log_d.to_string())
+            .arg("--m")
+            .arg(case.pp.m.to_string())
+            .arg("--blowup")
+            .arg(case.pp.blowup.to_string())
+            .arg("--terminal-coefficients")
+            .arg(case.pp.terminal_coefficients.to_string())
+            .arg("--num-queries")
+            .arg(case.pp.num_queries.to_string())
             .arg("--threads")
             .arg(case.threads.to_string())
             .arg("--out")

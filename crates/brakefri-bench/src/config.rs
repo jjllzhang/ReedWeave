@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use brakefri_core::{BrakeParams, Profile};
+use brakefri_core::{BrakeParams, PublicParams};
 use clap::{Args, Parser, Subcommand};
 use serde::Deserialize;
 
@@ -9,8 +9,7 @@ use crate::Result;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Measured coefficient-input BrakeFRI PCS trials",
-    long_about = "Measured coefficient-input BrakeFRI PCS trials. CLI values override the TOML benchmark settings; fixed protocol values are always validated. Sizes are inclusive. Only successful verified trials append numeric CSV rows. One initialized local thread pool serves all three phases. Each configuration runs one complete verified warmup excluded from CSV results, then the requested measured repetitions. Every trial uses a fresh PCS/DFT instance."
+    about = "Measured BrakeFRI v3 trials (timing_model=core-v1): geometry validation only; security not evaluated"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -18,30 +17,50 @@ pub struct Cli {
 }
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Run one configuration with the configured repetition policy.
+    /// One isolated case, with a verified warmup then measured repetitions.
     Run(Run),
-    /// Validate exact parameters and estimate memory without allocating proof data.
+    /// Validate geometry and resource admission without allocating proof data.
     Preflight(Matrix),
-    /// Execute cases sequentially, with one isolated child process per case.
+    /// Sequential isolated cases. Lists/ranges enumerate complete public parameters.
     Sweep(Matrix),
 }
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
+pub struct PpArgs {
+    #[arg(long)]
+    pub base_field: Option<String>,
+    /// Challenge extension degree(s): 1, 2, 3, or 5. Run accepts one.
+    #[arg(long, value_delimiter = ',')]
+    pub extension_degree: Option<Vec<usize>>,
+    /// Capacity exponent(s), comma-separated or an inclusive range such as 20..24.
+    #[arg(long)]
+    pub log_d: Option<String>,
+    #[arg(long)]
+    pub m: Option<usize>,
+    #[arg(long)]
+    pub blowup: Option<usize>,
+    #[arg(long)]
+    pub terminal_coefficients: Option<usize>,
+    #[arg(long)]
+    pub num_queries: Option<usize>,
+}
+#[derive(Args, Debug, Clone, Default)]
 pub struct Common {
-    #[arg(long, default_value = "configs/brakefri.toml")]
-    pub config: PathBuf,
-    /// Override the output root (raw trials append to BrakeFRI/<base_field>.csv).
+    /// Explicit TOML config. Without this, every public parameter is required on CLI.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    #[command(flatten)]
+    pub pp: PpArgs,
+    /// Output root; appends only to BrakeFRI/v3/goldilocks.csv.
     #[arg(long)]
     pub out: Option<PathBuf>,
-    /// Fixture seed; independent of Fiat-Shamir. Same inputs across hashes/threads.
     #[arg(long)]
     pub seed: Option<u64>,
-    /// Override measured repetitions after one warmup per configuration; must be positive.
     #[arg(long)]
     pub repetitions: Option<usize>,
-    /// Admission limit for estimated peak MiB, not a hard RSS limit.
+    /// Estimate-based admission cap, not an OS RSS limit.
     #[arg(long)]
     pub max_memory_mib: Option<u64>,
-    /// Wall time limit per child case, including fixtures, setup, warmup and all repetitions.
+    /// Whole child wall limit, including setup and warmup.
     #[arg(long)]
     pub time_limit_seconds: Option<u64>,
 }
@@ -50,11 +69,7 @@ pub struct Run {
     #[command(flatten)]
     pub common: Common,
     #[arg(long)]
-    pub field: Profile,
-    #[arg(long)]
-    pub log_n: usize,
-    #[arg(long)]
-    pub threads: usize,
+    pub threads: Option<usize>,
     #[arg(long, hide = true)]
     pub worker: bool,
 }
@@ -63,48 +78,59 @@ pub struct Matrix {
     #[command(flatten)]
     pub common: Common,
     #[arg(long, value_delimiter = ',')]
-    pub fields: Option<Vec<Profile>>,
-    /// Single size or inclusive range, for example 20..30.
-    #[arg(long)]
-    pub log_n: Option<String>,
-    #[arg(long, value_delimiter = ',')]
     pub threads: Option<Vec<usize>>,
+}
+/// Parse schema first, but defer semantic pp validation until after CLI overlays.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawPp {
+    pub base_field: String,
+    pub extension_degree: usize,
+    pub log_d: usize,
+    pub m: usize,
+    pub blowup: usize,
+    pub terminal_coefficients: usize,
+    pub num_queries: usize,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub protocol: Protocol,
+    pub pp: RawPp,
+    #[serde(default)]
     pub benchmark: Benchmark,
+    /// Optional complete sweep cases; CLI pp flags overlay every case.
+    #[serde(default)]
+    pub cases: Vec<RawPp>,
 }
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Protocol {
-    m: usize,
-    blowup: usize,
-    num_queries: usize,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Benchmark {
-    pub fields: Vec<String>,
-    pub log_n_min: usize,
-    pub log_n_max: usize,
+    pub log_d: Option<Vec<usize>>,
+    pub extension_degrees: Option<Vec<usize>>,
     pub threads: Vec<usize>,
-    /// Repetitions per configuration, independent of polynomial size.
     pub repetitions: usize,
     pub output_dir: PathBuf,
-    #[serde(default = "default_seed")]
     pub seed: u64,
     pub max_memory_mib: Option<u64>,
     pub time_limit_seconds: Option<u64>,
 }
-const fn default_seed() -> u64 {
-    20260906
+impl Default for Benchmark {
+    fn default() -> Self {
+        Self {
+            log_d: None,
+            extension_degrees: None,
+            threads: vec![1],
+            repetitions: 5,
+            output_dir: "results".into(),
+            seed: 20260906,
+            max_memory_mib: None,
+            time_limit_seconds: None,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Case {
-    pub field: Profile,
-    pub log_n: usize,
+    pub pp: PublicParams,
     pub threads: usize,
 }
 impl Case {
@@ -112,13 +138,19 @@ impl Case {
         if !matches!(self.threads, 1 | 32) {
             return Err("bench threads must be 1 or 32".into());
         }
-        Ok(BrakeParams::new(self.field, self.log_n)?)
+        Ok(BrakeParams::new(self.pp.clone())?)
     }
     pub fn label(&self) -> String {
+        let p = &self.pp;
         format!(
-            "{} log_n={} threads={}",
-            field_name(self.field),
-            self.log_n,
+            "{} e={} log_d={} m={} blowup={} terminal_coefficients={} num_queries={} threads={}",
+            p.base_field,
+            p.extension_degree,
+            p.log_d,
+            p.m,
+            p.blowup,
+            p.terminal_coefficients,
+            p.num_queries,
             self.threads
         )
     }
@@ -132,112 +164,131 @@ pub struct Settings {
     pub time_limit_seconds: Option<u64>,
 }
 impl Config {
-    pub fn load(common: &Common) -> Result<Self> {
-        let config: Self = toml::from_str(&std::fs::read_to_string(&common.config)?)?;
-        config.validate()?;
-        for (name, value) in [
-            ("repetitions", common.repetitions.map(|v| v as u64)),
-            ("max-memory-mib", common.max_memory_mib),
-            ("time-limit-seconds", common.time_limit_seconds),
-        ] {
-            if value == Some(0) {
-                return Err(format!("{name} must be positive").into());
-            }
-        }
-        Ok(config)
+    pub fn load(common: &Common) -> Result<Option<Self>> {
+        common
+            .config
+            .as_ref()
+            .map(|path| -> Result<Self> { Ok(toml::from_str(&std::fs::read_to_string(path)?)?) })
+            .transpose()
     }
-    pub fn validate(&self) -> Result<()> {
-        let b = &self.benchmark;
-        if b.fields.is_empty()
-            || b.threads.is_empty()
-            || b.threads.iter().any(|t| !matches!(t, 1 | 32))
-        {
-            return Err(
-                "fields and threads must be nonempty; bench threads must be 1 or 32".into(),
-            );
-        }
-        if b.repetitions == 0 || b.max_memory_mib == Some(0) || b.time_limit_seconds == Some(0) {
-            return Err("repetitions and configured resource limits must be positive".into());
-        }
-        let sizes = sizes(&format!("{}..{}", b.log_n_min, b.log_n_max))?;
-        for field in &b.fields {
-            let profile = field.parse()?;
-            for &size in &sizes {
-                BrakeParams::with_fixed_values(
-                    profile,
-                    size,
-                    self.protocol.m,
-                    self.protocol.blowup,
-                    self.protocol.num_queries,
-                )?;
-            }
-        }
-        Ok(())
+}
+pub fn settings(config: Option<&Config>, common: &Common) -> Result<Settings> {
+    let default = Benchmark::default();
+    let b = config.map(|c| &c.benchmark).unwrap_or(&default);
+    let settings = Settings {
+        output: common.out.clone().unwrap_or_else(|| b.output_dir.clone()),
+        seed: common.seed.unwrap_or(b.seed),
+        repetitions: common.repetitions.unwrap_or(b.repetitions),
+        max_memory_mib: common.max_memory_mib.or(b.max_memory_mib),
+        time_limit_seconds: common.time_limit_seconds.or(b.time_limit_seconds),
+    };
+    if settings.repetitions == 0
+        || settings.max_memory_mib == Some(0)
+        || settings.time_limit_seconds == Some(0)
+    {
+        return Err("repetitions and resource limits must be positive".into());
     }
-    pub fn settings(&self, common: &Common) -> Settings {
-        let b = &self.benchmark;
-        Settings {
-            output: common.out.clone().unwrap_or_else(|| b.output_dir.clone()),
-            seed: common.seed.unwrap_or(b.seed),
-            repetitions: common.repetitions.unwrap_or(b.repetitions),
-            max_memory_mib: common.max_memory_mib.or(b.max_memory_mib),
-            time_limit_seconds: common.time_limit_seconds.or(b.time_limit_seconds),
-        }
+    Ok(settings)
+}
+pub fn cases(
+    config: Option<&Config>,
+    common: &Common,
+    threads: Option<&[usize]>,
+    matrix: bool,
+) -> Result<Vec<Case>> {
+    let default = Benchmark::default();
+    let b = config.map(|c| &c.benchmark).unwrap_or(&default);
+    let threads = threads.unwrap_or(&b.threads);
+    if threads.is_empty() {
+        return Err("threads must be nonempty".into());
     }
-    pub fn cases(&self, matrix: &Matrix) -> Result<Vec<Case>> {
-        let b = &self.benchmark;
-        let fields = match &matrix.fields {
-            Some(fields) => fields.clone(),
-            None => b
-                .fields
-                .iter()
-                .map(|f| f.parse())
-                .collect::<std::result::Result<Vec<_>, _>>()?,
+    let sources: Vec<Option<&RawPp>> = match config {
+        Some(c) if matrix && !c.cases.is_empty() => c.cases.iter().map(Some).collect(),
+        Some(c) => vec![Some(&c.pp)],
+        None => vec![None],
+    };
+    let a = &common.pp;
+    let mut result = Vec::new();
+    for raw in sources {
+        let required = |value: Option<usize>, name: &str| -> Result<usize> {
+            value.ok_or_else(|| {
+                format!("missing public parameter --{name}; supply complete CLI pp or --config")
+                    .into()
+            })
         };
-        let threads = matrix.threads.as_ref().unwrap_or(&b.threads);
-        let sizes = sizes(
-            &matrix
-                .log_n
-                .clone()
-                .unwrap_or_else(|| format!("{}..{}", b.log_n_min, b.log_n_max)),
-        )?;
-        if fields.is_empty() || threads.is_empty() {
-            return Err("case lists must be nonempty".into());
+        let base_field = a
+            .base_field
+            .as_deref()
+            .or(raw.map(|p| p.base_field.as_str()))
+            .ok_or("missing public parameter --base-field")?
+            .parse()?;
+        let degrees = a
+            .extension_degree
+            .clone()
+            .or_else(|| matrix.then(|| b.extension_degrees.clone()).flatten())
+            .or_else(|| raw.map(|p| vec![p.extension_degree]))
+            .ok_or("missing public parameter --extension-degree")?;
+        let logs = a
+            .log_d
+            .as_deref()
+            .map(sizes)
+            .transpose()?
+            .or_else(|| matrix.then(|| b.log_d.clone()).flatten())
+            .or_else(|| raw.map(|p| vec![p.log_d]))
+            .ok_or("missing public parameter --log-d")?;
+        if degrees.is_empty() || logs.is_empty() {
+            return Err("pp lists must be nonempty".into());
         }
-        let mut cases = Vec::new();
-        for field in fields {
-            for &log_n in &sizes {
+        for &extension_degree in &degrees {
+            for &log_d in &logs {
                 for &threads in threads {
                     let case = Case {
-                        field,
-                        log_n,
+                        pp: PublicParams {
+                            base_field,
+                            extension_degree,
+                            log_d,
+                            m: required(a.m.or(raw.map(|p| p.m)), "m")?,
+                            blowup: required(a.blowup.or(raw.map(|p| p.blowup)), "blowup")?,
+                            terminal_coefficients: required(
+                                a.terminal_coefficients
+                                    .or(raw.map(|p| p.terminal_coefficients)),
+                                "terminal-coefficients",
+                            )?,
+                            num_queries: required(
+                                a.num_queries.or(raw.map(|p| p.num_queries)),
+                                "num-queries",
+                            )?,
+                        },
                         threads,
                     };
                     case.params()?;
-                    cases.push(case);
+                    result.push(case);
                 }
             }
         }
-        Ok(cases)
     }
+    if !matrix && result.len() != 1 {
+        return Err("run requires exactly one pp and thread count".into());
+    }
+    Ok(result)
 }
 pub fn sizes(input: &str) -> Result<Vec<usize>> {
-    let (start, end) = match input.split_once("..") {
-        Some((a, b)) => (a.parse::<usize>()?, b.parse::<usize>()?),
-        None => {
-            let n = input.parse::<usize>()?;
-            (n, n)
+    let mut result = Vec::new();
+    for part in input.split(',') {
+        let (start, end) = match part.split_once("..") {
+            Some((a, b)) => (a.parse::<usize>()?, b.parse::<usize>()?),
+            None => {
+                let n = part.parse::<usize>()?;
+                (n, n)
+            }
+        };
+        // No old 14..30 policy; larger exponents cannot represent a usize capacity.
+        if start > end || end >= usize::BITS as usize {
+            return Err(
+                "log_d must be an ascending range of representable capacity exponents".into(),
+            );
         }
-    };
-    if !(14..=30).contains(&start) || !(start..=30).contains(&end) {
-        return Err("sizes must be an inclusive ascending range within 14..30".into());
+        result.extend(start..=end);
     }
-    Ok((start..=end).collect())
-}
-
-pub fn field_name(field: Profile) -> &'static str {
-    match field {
-        Profile::GoldilocksQuadratic => "goldilocks-quadratic",
-        Profile::F128Base => "f128-base",
-    }
+    Ok(result)
 }

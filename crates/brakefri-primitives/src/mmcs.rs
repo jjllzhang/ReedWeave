@@ -74,7 +74,7 @@ impl<F: CanonicalField> CanonicalMmcs<F> {
                 F::COORDINATE_BYTES,
                 kind
             ),
-            (1, 1, 8, LeafKind::Base) | (2, 1, 16, _) | (1, 2, 8, LeafKind::Challenge)
+            (1, 1, 8, LeafKind::Base) | (1, 1 | 2 | 3 | 5, 8, LeafKind::Challenge)
         );
         if !valid_role {
             return Err(MmcsError::InvalidRole);

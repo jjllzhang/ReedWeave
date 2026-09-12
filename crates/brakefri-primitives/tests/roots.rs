@@ -37,3 +37,26 @@ fn every_goldilocks_root_matches_fixed_profile() {
         GoldilocksQuadratic::from(Goldilocks::from_u8(7))
     );
 }
+
+#[test]
+fn current_upstream_cubic_and_quintic_representations() {
+    use brakefri_primitives::fields::{GoldilocksCubic, GoldilocksQuintic};
+    let u = GoldilocksCubic::from_basis_coefficients_fn(|i| {
+        if i == 1 {
+            Goldilocks::ONE
+        } else {
+            Goldilocks::ZERO
+        }
+    });
+    assert_eq!(u.exp_u64(3), u + GoldilocksCubic::ONE);
+    let u = GoldilocksQuintic::from_basis_coefficients_fn(|i| {
+        if i == 1 {
+            Goldilocks::ONE
+        } else {
+            Goldilocks::ZERO
+        }
+    });
+    assert_eq!(u.exp_u64(5), GoldilocksQuintic::from_u8(3));
+    // The quadratic has an additional extension root, but it must not expand the base domain.
+    assert_eq!(GoldilocksQuadratic::TWO_ADICITY, 33);
+}

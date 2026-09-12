@@ -4,6 +4,8 @@ mod output;
 mod params;
 mod resources;
 mod runner;
+mod whir;
+mod whir_params;
 
 use clap::Parser;
 use config::{Case, Cli, Command, Settings};
@@ -40,10 +42,16 @@ fn execute(cli: Cli) -> Result<()> {
 }
 fn preflight(case: &Case, settings: &Settings) -> Result<()> {
     let audit = runner::audit(case)?;
+    let terminal_kind = if case.protocol == config::Protocol::Whir {
+        "terminal_evaluations"
+    } else {
+        "terminal_coefficients"
+    };
     eprintln!(
-        "{}: algebraic_bound_bits={:.9} terminal_coefficients={} queries={} radii={} estimated_peak_mib={} available_bytes={:?}",
+        "{}: algebraic_bound_bits={:.9} {}={} queries={} radii={} estimated_peak_mib={} available_bytes={:?}",
         case.label(),
         audit.bits,
+        terminal_kind,
         audit.terminal,
         audit.queries_text(),
         audit.radii_text(),

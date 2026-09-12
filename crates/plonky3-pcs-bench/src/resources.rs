@@ -1,7 +1,7 @@
 //! Conservative admission estimates; these are not measured RSS or hard limits.
 use crate::{
     Result,
-    config::{Case, Settings},
+    config::{Case, Protocol, Settings},
 };
 use std::{fs, path::Path};
 const MIB: u64 = 1 << 20;
@@ -15,8 +15,19 @@ pub fn estimated_peak(case: &Case) -> u64 {
     // initial-domain buffers for retained layers, quotients, LDE/DFT scratch.
     // Binary-tree nodes across all layers: bounded by eight initial-domain
     // digests, including initial/folded trees and tree-construction scratch.
-    let subtotal =
-        8 * n * base + 8 * (2 * n) * extension + 8 * (2 * n) * 32 + case.threads as u64 * 2 * MIB;
+    // WHIR also owns source/stacked tables and extension-valued sumcheck
+    // polynomial/weight buffers. Its RS domains halve each round with this
+    // fixed schedule; reserve eight additional n-sized extension buffers.
+    let sumcheck = if case.protocol == Protocol::Whir {
+        8 * n * extension
+    } else {
+        0
+    };
+    let subtotal = 8 * n * base
+        + 8 * (2 * n) * extension
+        + 8 * (2 * n) * 32
+        + sumcheck
+        + case.threads as u64 * 2 * MIB;
     // Covers allocator overhead plus serialized/decoded proof and metadata.
     subtotal + subtotal / 4 + 64 * MIB
 }

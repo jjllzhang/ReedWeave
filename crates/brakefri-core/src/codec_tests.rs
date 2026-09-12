@@ -1,7 +1,9 @@
 use super::*;
 use brakefri_primitives::{
-    fields::{F128, Goldilocks, GoldilocksQuadratic},
-    transcript::{F128Profile, GoldilocksProfile},
+    fields::{Goldilocks, GoldilocksCubic, GoldilocksQuadratic, GoldilocksQuintic},
+    transcript::{
+        GoldilocksBaseProfile, GoldilocksCubicProfile, GoldilocksProfile, GoldilocksQuinticProfile,
+    },
 };
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 
@@ -9,6 +11,8 @@ use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 // Its unbounded Deserialize is only a test interoperability reference.
 #[derive(Debug, Serialize, Deserialize)]
 struct ReferenceProof<B, K> {
+    version: u8,
+    context_id: Digest,
     blocks: Vec<B>,
     rounds: Vec<(K, K, [u8; 32])>,
     terminal: Vec<K>,
@@ -17,7 +21,6 @@ struct ReferenceProof<B, K> {
 }
 
 type GoldWire = ReferenceProof<[u8; 8], ([u8; 8], [u8; 8])>;
-type F128Wire = ReferenceProof<[u8; 16], ([u8; 16],)>;
 
 fn varint_size(n: usize) -> usize {
     postcard::to_allocvec(&n).unwrap().len()
@@ -35,14 +38,16 @@ fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
             .iter()
             .map(|o| o.proof.sibling_hashes.len())
             .sum::<usize>();
-    let payload = P::Base::BYTE_WIDTH * (M + M * u0)
-        + 16 * (2 * ell + proof.terminal_coefficients.len() + scalar_values)
+    let m = proof.block_values.len();
+    let payload = 33
+        + P::Base::BYTE_WIDTH * (m + m * u0)
+        + P::Challenge::BYTE_WIDTH * (2 * ell + proof.terminal_coefficients.len() + scalar_values)
         + 32 * (1 + ell + nodes);
-    let framing = varint_size(M)
+    let framing = varint_size(m)
         + varint_size(ell)
         + varint_size(proof.terminal_coefficients.len())
         + varint_size(u0)
-        + u0 * varint_size(M)
+        + u0 * varint_size(m)
         + varint_size(h0)
         + varint_size(ell - 1)
         + proof
@@ -62,10 +67,10 @@ fn fixture<P: FieldProfile>(
     P::Base,
     crate::Opening<P>,
 ) {
-    let params = BrakeParams::new(P::PROFILE, log_n).unwrap();
+    let params = test_params::<P>(log_n);
     let execution = ExecutionContext::new(1).unwrap();
     let pcs = BrakeFri::<P>::new(params.clone()).unwrap();
-    let coefficients = (0..params.n())
+    let coefficients = (0..params.d())
         .map(|i| P::Base::from_usize(i * 17 + 3))
         .collect();
     let (commitment, state) = pcs.commit(coefficients, &execution).unwrap();
@@ -150,13 +155,15 @@ fn roundtrip<P: FieldProfile>(log_n: usize) {
 #[test]
 fn actual_bytes_verify_for_every_field_and_size() {
     roundtrip::<GoldilocksProfile>(15);
-    roundtrip::<F128Profile>(15);
+    roundtrip::<GoldilocksCubicProfile>(15);
+    roundtrip::<GoldilocksQuinticProfile>(15);
+    roundtrip::<GoldilocksBaseProfile>(15);
     // Nonempty initial and scalar frontiers.
     roundtrip::<GoldilocksProfile>(18);
-    roundtrip::<F128Profile>(18);
+    roundtrip::<GoldilocksBaseProfile>(18);
     // t=1 has no scalar openings, but still has a vector length of zero.
     roundtrip::<GoldilocksProfile>(14);
-    roundtrip::<F128Profile>(14);
+    roundtrip::<GoldilocksBaseProfile>(14);
 }
 
 #[test]
@@ -206,53 +213,6 @@ fn serde_interoperability_and_protocol_only_order() {
         &execution,
     )
     .unwrap();
-
-    let (pcs, execution, commitment, z, opening) = fixture::<F128Profile>(15);
-    let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
-    let wire: F128Wire = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(
-        wire.terminal.iter().map(|c| c.0).collect::<Vec<_>>(),
-        opening
-            .proof
-            .terminal_coefficients
-            .iter()
-            .map(CanonicalField::to_canonical_bytes)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        wire.initial.0,
-        opening
-            .proof
-            .initial_opening
-            .rows
-            .iter()
-            .map(|row| row
-                .iter()
-                .map(CanonicalField::to_canonical_bytes)
-                .collect::<Vec<_>>())
-            .collect::<Vec<_>>()
-    );
-    for (scalar, opening) in wire.scalars.iter().zip(&opening.proof.scalar_openings) {
-        assert_eq!(
-            scalar.0,
-            opening
-                .values
-                .iter()
-                .map(|v| (v.to_canonical_bytes(),))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(scalar.1, opening.proof.sibling_hashes);
-    }
-    let received = postcard::to_allocvec(&wire).unwrap();
-    assert_eq!(received, bytes);
-    pcs.verify_encoded(
-        &commitment,
-        (z, opening.y),
-        &commitment.root,
-        &received,
-        &execution,
-    )
-    .unwrap();
 }
 
 fn coordinate_width<F: CanonicalField>(values: &[F]) {
@@ -262,12 +222,31 @@ fn coordinate_width<F: CanonicalField>(values: &[F]) {
         assert_eq!(bytes, value.to_canonical_bytes().as_ref());
         let decoded: Coordinate<F> = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.0, value);
+        for end in 0..F::BYTE_WIDTH {
+            assert!(postcard::from_bytes::<Coordinate<F>>(&bytes[..end]).is_err());
+        }
+        for position in (0..F::BYTE_WIDTH).step_by(8) {
+            for invalid in [GoldilocksProfile::PROFILE.modulus() as u64, u64::MAX] {
+                let mut bad = bytes.clone();
+                bad[position..position + 8].copy_from_slice(&invalid.to_le_bytes());
+                assert!(postcard::from_bytes::<Coordinate<F>>(&bad).is_err());
+            }
+        }
     }
 }
 #[test]
 fn canonical_fixed_coordinate_arrays() {
     coordinate_width(&[Goldilocks::ZERO, Goldilocks::ONE, -Goldilocks::ONE]);
-    coordinate_width(&[F128::ZERO, F128::ONE, -F128::ONE]);
+    coordinate_width(&[
+        GoldilocksCubic::ZERO,
+        GoldilocksCubic::ONE,
+        GoldilocksCubic::from_basis_coefficients_fn(|i| -Goldilocks::from_usize(i + 1)),
+    ]);
+    coordinate_width(&[
+        GoldilocksQuintic::ZERO,
+        GoldilocksQuintic::ONE,
+        GoldilocksQuintic::from_basis_coefficients_fn(|i| -Goldilocks::from_usize(i + 1)),
+    ]);
     coordinate_width(&[
         GoldilocksQuadratic::ZERO,
         GoldilocksQuadratic::ONE,
@@ -287,9 +266,6 @@ fn canonical_fixed_coordinate_arrays() {
             challenge[position..position + 8].copy_from_slice(&bytes);
             assert!(postcard::from_bytes::<Coordinate<GoldilocksQuadratic>>(&challenge).is_err());
         }
-    }
-    for value in [F128::MODULUS, u128::MAX] {
-        assert!(postcard::from_bytes::<Coordinate<F128>>(&value.to_le_bytes()).is_err());
     }
 }
 
@@ -314,12 +290,13 @@ impl Layout {
 }
 fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layout {
     let mut l = Layout {
-        at: 0,
+        at: 33,
         vectors: Vec::new(),
         coordinates: Vec::new(),
     };
-    l.vector(M, M, M);
-    l.fields(M, P::Base::COORDINATE_BYTES);
+    let m = params.m();
+    l.vector(m, m, m);
+    l.fields(m, P::Base::COORDINATE_BYTES);
     l.vector(params.rounds(), params.rounds(), params.rounds());
     for _ in &proof.rounds {
         l.fields(
@@ -340,7 +317,7 @@ fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layou
     let (max, depth) = opening_bounds(params, 0).unwrap();
     l.vector(proof.initial_opening.rows.len(), 1, max);
     for row in &proof.initial_opening.rows {
-        l.vector(row.len(), M, M);
+        l.vector(row.len(), m, m);
         l.fields(row.len(), P::Base::COORDINATE_BYTES);
     }
     l.vector(
@@ -415,8 +392,9 @@ fn malformed<P: FieldProfile>() {
         Err(DecodeError::TrailingBytes)
     ));
     // Same numerical length M with a redundant final varint group.
-    let mut overlong = vec![0xc0, 0x00];
-    overlong.extend_from_slice(&bytes[1..]);
+    let mut overlong = bytes[..33].to_vec();
+    overlong.extend([0x84, 0x00]);
+    overlong.extend_from_slice(&bytes[34..]);
     assert!(decode_eval_proof::<P>(pcs.params(), &overlong).is_err());
     for layer in 0..pcs.params().rounds() {
         let mut extra = opening.proof.clone();
@@ -454,15 +432,9 @@ fn malformed<P: FieldProfile>() {
         pcs.verify(&commitment, z, opening.y, &typed, &execution)
             .is_err()
     );
-    let other = BrakeParams::new(
-        if P::PROFILE == crate::Profile::F128Base {
-            crate::Profile::GoldilocksQuadratic
-        } else {
-            crate::Profile::F128Base
-        },
-        15,
-    )
-    .unwrap();
+    let mut pp = public_params::<P>(15);
+    pp.extension_degree = if pp.extension_degree == 1 { 2 } else { 1 };
+    let other = BrakeParams::new(pp).unwrap();
     assert!(encode_eval_proof(&other, &opening.proof).is_err());
     assert!(decode_eval_proof::<P>(&other, &bytes).is_err());
 }
@@ -470,7 +442,9 @@ fn malformed<P: FieldProfile>() {
 #[test]
 fn malformed_bytes_and_typed_frontiers() {
     malformed::<GoldilocksProfile>();
-    malformed::<F128Profile>();
+    malformed::<GoldilocksBaseProfile>();
+    malformed::<GoldilocksCubicProfile>();
+    malformed::<GoldilocksQuinticProfile>();
     for count in [0, 1, 31, 33, 64] {
         assert!(decode_commitment(&vec![0; count]).is_err());
     }
@@ -478,17 +452,17 @@ fn malformed_bytes_and_typed_frontiers() {
 
 #[test]
 fn length_bounds_precede_element_visits_at_largest_parameters() {
-    for profile in [
-        crate::Profile::GoldilocksQuadratic,
-        crate::Profile::F128Base,
-    ] {
-        let params = BrakeParams::new(profile, 30).unwrap();
+    for degree in [1, 2, 3, 5] {
+        let mut pp = public_params::<GoldilocksProfile>(15);
+        pp.extension_degree = degree;
+        pp.log_d = 31;
+        let params = BrakeParams::new(pp).unwrap();
         for j in 0..params.rounds() {
             let (values, depth) = opening_bounds(&params, j).unwrap();
             for max in [
                 values,
                 boundary_bound(values, depth).unwrap(),
-                M,
+                params.m(),
                 params.rounds(),
             ] {
                 for count in [max + 1, usize::MAX] {
@@ -513,4 +487,19 @@ fn length_bounds_precede_element_visits_at_largest_parameters() {
         }
     }
     assert!(boundary_bound(usize::MAX, 2).is_err());
+}
+
+fn public_params<P: FieldProfile>(old_log: usize) -> crate::PublicParams {
+    crate::PublicParams {
+        base_field: crate::BaseField::Goldilocks,
+        extension_degree: P::PROFILE.extension_degree(),
+        log_d: old_log - 10,
+        m: 4,
+        blowup: 2,
+        terminal_coefficients: 2,
+        num_queries: 19,
+    }
+}
+fn test_params<P: FieldProfile>(old_log: usize) -> BrakeParams {
+    BrakeParams::new(public_params::<P>(old_log)).unwrap()
 }

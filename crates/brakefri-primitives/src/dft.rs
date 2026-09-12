@@ -122,10 +122,10 @@ impl<F: TwoAdicField + Ord> NaturalOrderDft<F> {
 
 /// Build the padded `height × blocks` coefficient matrix for coefficient-input commitment.
 ///
-/// Input `coefficients[i * block_capacity + a]` becomes output `[a, i]`;
+/// Input `coefficients[blocks * a + i]` becomes output `[a, i]`;
 /// rows `block_capacity..height` are zero. The input is borrowed for retention by M2.
 /// This primitive permits small test geometries; protocol parameter checks belong to core.
-/// Layout writes are sequential and tiled, with one destination allocation.
+/// Layout writes are sequential, with one destination allocation.
 pub fn padded_coefficient_blocks<F: TwoAdicField>(
     coefficients: &[F],
     blocks: usize,
@@ -147,7 +147,7 @@ pub fn padded_coefficient_blocks<F: TwoAdicField>(
         .ok_or(DftError::SizeOverflow)?;
     let len = blocks.checked_mul(height).ok_or(DftError::SizeOverflow)?;
     check_storage::<F>(len)?;
-    if coefficients.len() != expected {
+    if coefficients.len() > expected {
         return Err(DftError::CoefficientCount {
             expected,
             actual: coefficients.len(),
@@ -158,16 +158,6 @@ pub fn padded_coefficient_blocks<F: TwoAdicField>(
         .try_reserve_exact(len)
         .map_err(|_| DftError::AllocationFailed)?;
     values.resize(len, F::ZERO);
-    const TILE: usize = 32;
-    for a_start in (0..block_capacity).step_by(TILE) {
-        for i_start in (0..blocks).step_by(TILE) {
-            for a in a_start..a_start.saturating_add(TILE).min(block_capacity) {
-                let row = &mut values[a * blocks..(a + 1) * blocks];
-                for i in i_start..i_start.saturating_add(TILE).min(blocks) {
-                    row[i] = coefficients[i * block_capacity + a];
-                }
-            }
-        }
-    }
+    values[..coefficients.len()].copy_from_slice(coefficients);
     Ok(RowMajorMatrix::new(values, blocks))
 }

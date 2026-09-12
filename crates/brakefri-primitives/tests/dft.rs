@@ -1,6 +1,5 @@
 use brakefri_primitives::dft::{DftError, NaturalOrderDft, padded_coefficient_blocks};
 use brakefri_runtime::ExecutionContext;
-use p3_f128_adapter::F128;
 use p3_field::{
     BasedVectorSpace, ExtensionField, PrimeCharacteristicRing, TwoAdicField,
     extension::BinomialExtensionField,
@@ -60,11 +59,6 @@ fn goldilocks_base_fixed_root_evaluations() {
 }
 
 #[test]
-fn f128_fixed_root_evaluations() {
-    base_cases(F128::from_u128(23953097886125630542083529559205016746), 40);
-}
-
-#[test]
 fn quadratic_coefficients_use_goldilocks_roots() {
     let execution = ExecutionContext::new(2).unwrap();
     let dft = NaturalOrderDft::<Goldilocks>::default();
@@ -100,7 +94,7 @@ fn block_layout_crosses_tile_boundaries_and_encodes_each_block() {
             assert_eq!(
                 padded.values[a * blocks + i],
                 if a < k {
-                    coefficients[i * k + a]
+                    coefficients[blocks * a + i]
                 } else {
                     Goldilocks::ZERO
                 }
@@ -113,9 +107,11 @@ fn block_layout_crosses_tile_boundaries_and_encodes_each_block() {
     let root = Goldilocks::from_u64(0x185629dcda58878c).exp_power_of_2(25);
     for t in 0..height {
         let x = root.exp_u64(t as u64);
-        for (i, block) in coefficients.chunks_exact(k).enumerate() {
-            let expected = block
+        for i in 0..blocks {
+            let expected = coefficients
                 .iter()
+                .skip(i)
+                .step_by(blocks)
                 .rev()
                 .fold(Goldilocks::ZERO, |acc, &c| acc * x + c);
             assert_eq!(output.values[t * blocks + i], expected);
@@ -166,11 +162,10 @@ fn invalid_block_shapes_and_overflow_are_rejected_before_allocation() {
         );
     }
     assert_eq!(
-        build(2, 4, 8),
-        DftError::CoefficientCount {
-            expected: 8,
-            actual: 0
-        }
+        padded_coefficient_blocks::<Goldilocks>(&[], 2, 4, 8)
+            .unwrap()
+            .values,
+        vec![Goldilocks::ZERO; 16]
     );
     assert_eq!(
         padded_coefficient_blocks(&[Goldilocks::ONE; 9], 2, 4, 8).unwrap_err(),

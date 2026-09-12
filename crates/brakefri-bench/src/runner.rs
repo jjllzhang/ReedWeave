@@ -1,12 +1,15 @@
 use std::time::Instant;
 
 use brakefri_core::{
-    BrakeFri, BrakeParams, Profile,
-    codec::{encode_commitment, encode_eval_proof},
+    BrakeFri, BrakeParams,
+    codec::{decode_commitment, decode_eval_proof, encode_commitment, encode_eval_proof},
 };
 use brakefri_primitives::{
     fields::CanonicalField,
-    transcript::{F128Profile, FieldProfile, GoldilocksProfile},
+    transcript::{
+        FieldProfile, GoldilocksBaseProfile, GoldilocksCubicProfile, GoldilocksQuadraticProfile,
+        GoldilocksQuinticProfile,
+    },
 };
 use brakefri_runtime::ExecutionContext;
 
@@ -29,7 +32,8 @@ impl Fixture {
     }
     fn field<F: CanonicalField>(&mut self) -> F {
         loop {
-            let mut bytes = [0u8; 16];
+            // All supported canonical widths fit, without per-coefficient allocation.
+            let mut bytes = [0u8; 40];
             for chunk in bytes[..F::BYTE_WIDTH].chunks_exact_mut(8) {
                 chunk.copy_from_slice(&self.word().to_le_bytes());
             }
@@ -44,11 +48,12 @@ pub fn run(case: &Case, settings: &Settings) -> Result<()> {
     let params = case.params()?;
     let estimate = Estimate::new(case)?;
     resources::admit(&estimate, settings, &Available::detect())?;
-    match case.field {
-        Profile::GoldilocksQuadratic => {
-            run_generic::<GoldilocksProfile>(case, settings, &params, &estimate)
-        }
-        Profile::F128Base => run_generic::<F128Profile>(case, settings, &params, &estimate),
+    match params.extension_degree() {
+        1 => run_generic::<GoldilocksBaseProfile>(case, settings, &params, &estimate),
+        2 => run_generic::<GoldilocksQuadraticProfile>(case, settings, &params, &estimate),
+        3 => run_generic::<GoldilocksCubicProfile>(case, settings, &params, &estimate),
+        5 => run_generic::<GoldilocksQuinticProfile>(case, settings, &params, &estimate),
+        _ => Err("unsupported extension degree".into()),
     }
 }
 fn run_generic<P: FieldProfile>(
@@ -60,12 +65,12 @@ fn run_generic<P: FieldProfile>(
     let execution = ExecutionContext::new(case.threads)?;
     let mut csv = output::open_csv(&output::csv_path(case, &settings.output))?;
     eprintln!(
-        "START {} seed={} warmups=1 repetitions={}",
+        "START {} timing_model=core-v1 seed={} warmups=1 repetitions={}",
         case.label(),
         settings.seed,
         settings.repetitions
     );
-    let point_seed = settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64;
+    let point_seed = settings.seed ^ 0x706f696e74730000 ^ case.pp.log_d as u64;
     let mut points = Fixture(point_seed);
     // Iteration zero executes the complete pipeline as a discarded warmup.
     // Every iteration owns a fresh PCS/DFT instance and releases it on exit.
@@ -73,32 +78,36 @@ fn run_generic<P: FieldProfile>(
         resources::admit(estimate, settings, &Available::detect())?;
         // Same polynomial across repetitions, suites and thread counts. Fresh allocation
         // is consumed by each commit, and drops before the next trial.
-        let mut fixture = Fixture(settings.seed ^ case.log_n as u64);
+        let mut fixture = Fixture(settings.seed ^ case.pp.log_d as u64);
         let mut coefficients = Vec::new();
-        coefficients.try_reserve_exact(params.n())?;
-        coefficients.extend((0..params.n()).map(|_| fixture.field::<P::Base>()));
+        coefficients.try_reserve_exact(params.d())?;
+        coefficients.extend((0..params.d()).map(|_| fixture.field::<P::Base>()));
         let pcs = BrakeFri::<P>::new(params.clone())?;
         let start = Instant::now();
         let (commitment, state) = pcs.commit(coefficients, &execution)?;
-        let commit_bytes = encode_commitment(&commitment);
         let commit_time = start.elapsed().as_secs_f64();
+        let commit_bytes = encode_commitment(&commitment);
 
         // Supplied only after commitment; external point selection is not prover work.
         let z = points.field::<P::Base>();
         let start = Instant::now();
         let opening = pcs.prove(&state, z, &execution)?;
-        let eval_bytes = encode_eval_proof::<P>(pcs.params(), &opening.proof)?;
         let prove_time = start.elapsed().as_secs_f64();
+        let eval_bytes = encode_eval_proof::<P>(pcs.params(), &opening.proof)?;
 
+        // Strict wire round-trip and application binding are outside core-v1 timers.
+        let received = decode_commitment(&commit_bytes)?;
+        if received != commitment {
+            return Err("decoded commitment mismatch".into());
+        }
+        let decoded_proof = decode_eval_proof::<P>(pcs.params(), &eval_bytes)?;
         let start = Instant::now();
-        let proof_size = pcs.verify_encoded(
-            &commitment,
-            (z, opening.y),
-            &commit_bytes,
-            &eval_bytes,
-            &execution,
-        )?;
+        pcs.verify(&received, z, opening.y, &decoded_proof, &execution)?;
         let verify_time = start.elapsed().as_secs_f64();
+        let proof_size = commit_bytes
+            .len()
+            .checked_add(eval_bytes.len())
+            .ok_or("total protocol byte length overflow")?;
         if repetition == 0 {
             eprintln!("WARMUP VERIFIED {} proof_size={}", case.label(), proof_size);
             // Preserve the formal trials' original deterministic point sequence.
@@ -131,11 +140,10 @@ mod tests {
         let mut fixture = Fixture(0);
         assert_eq!(fixture.word(), 0xe220a8397b1dcdaf);
         let execution = ExecutionContext::new(1).unwrap();
-        let pcs = BrakeFri::<GoldilocksProfile>::new(
-            BrakeParams::new(Profile::GoldilocksQuadratic, 14).unwrap(),
-        )
-        .unwrap();
-        let coefficients: Vec<_> = (0..pcs.params().n())
+        let pcs =
+            BrakeFri::<GoldilocksQuadraticProfile>::new(crate::tests::case().params().unwrap())
+                .unwrap();
+        let coefficients: Vec<_> = (0..pcs.params().d())
             .map(|_| fixture.field::<Goldilocks>())
             .collect();
         let (commitment, state) = pcs.commit(coefficients, &execution).unwrap();
@@ -144,7 +152,8 @@ mod tests {
             let z = fixture.field::<Goldilocks>();
             let opening = pcs.prove(&state, z, &execution).unwrap();
             let proof =
-                encode_eval_proof::<GoldilocksProfile>(pcs.params(), &opening.proof).unwrap();
+                encode_eval_proof::<GoldilocksQuadraticProfile>(pcs.params(), &opening.proof)
+                    .unwrap();
             assert_eq!(
                 pcs.verify_encoded(&commitment, (z, opening.y), &bytes, &proof, &execution)
                     .unwrap(),

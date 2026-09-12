@@ -1,7 +1,5 @@
 use std::{fs, path::Path};
 
-use brakefri_core::{B, M, Q};
-
 use crate::{
     Result,
     config::{Case, Settings},
@@ -20,40 +18,48 @@ pub struct Estimate {
 impl Estimate {
     pub fn new(case: &Case) -> Result<Self> {
         let params = case.params()?;
-        let n = params.n() as u64;
-        let domain = params.domain_size() as u64;
-        let base = case.field.base_bytes() as u64;
-        let coefficients = n * base;
-        let matrix = B as u64 * coefficients;
-        // Initial binary tree plus all successively halved scalar trees.
-        let trees =
-            (4 * domain - 2 * params.terminal_domain_size() as u64 - params.rounds() as u64 - 1)
-                * 32;
-        // Conservatively allow a full normalization buffer, twiddles, combined/folded
-        // challenge buffers, simultaneous typed/wire/decoded proofs, and worker stacks.
-        let scratch = matrix
-            + domain * base
-            + 8 * domain * 16
-            + 6 * (2 * Q as u64 * M as u64 * base
-                + 2 * Q as u64 * params.rounds() as u64 * 16
-                + params.terminal_coefficient_count() as u64 * 16
-                + 2 * Q as u64 * params.rounds() as u64 * params.log_domain_size() as u64 * 32);
-        let scratch = scratch
-            .checked_add(
-                (case.threads as u64)
-                    .checked_mul(2 * MIB)
-                    .ok_or("thread memory estimate overflow")?,
-            )
-            .ok_or("scratch memory estimate overflow")?;
-        let subtotal = coefficients
-            .checked_add(matrix)
-            .and_then(|n| n.checked_add(trees))
-            .and_then(|n| n.checked_add(scratch))
-            .ok_or("memory estimate overflow")?;
-        let peak = subtotal
-            .checked_add(subtotal / 4)
-            .and_then(|n| n.checked_add(32 * MIB))
-            .ok_or("memory estimate overflow")?;
+        let d = u64::try_from(params.d())?;
+        let domain = u64::try_from(params.domain_size())?;
+        let challenge = mul(&[8, u64::try_from(params.extension_degree())?])?;
+        let q = u64::try_from(params.num_queries())?;
+        let m = u64::try_from(params.m())?;
+        let rounds = u64::try_from(params.rounds())?;
+        let coefficients = mul(&[d, 8])?;
+        let matrix = mul(&[u64::try_from(params.blowup())?, coefficients])?;
+        // Initial base-row tree and every folded scalar tree, including terminal.
+        let mut trees = 0;
+        let mut layer = domain;
+        for _ in 0..=params.rounds() {
+            let nodes = mul(&[2, layer])?
+                .checked_sub(1)
+                .ok_or("tree estimate underflow")?;
+            trees = add(&[trees, mul(&[nodes, 32])?])?;
+            layer /= 2;
+        }
+        // Full normalization buffer, twiddles, simultaneous challenge/fold buffers,
+        // typed/wire/decoded proofs (including framing), and worker stacks.
+        let proof = add(&[
+            mul(&[2, q, m, 8])?,
+            mul(&[2, q, rounds, challenge])?,
+            mul(&[
+                u64::try_from(params.terminal_coefficient_count())?,
+                challenge,
+            ])?,
+            mul(&[2, q, rounds, u64::try_from(params.log_domain_size())?, 32])?,
+            mul(&[m, challenge])?,
+            mul(&[2, rounds, challenge])?,
+            mul(&[rounds, 32])?,
+            mul(&[add(&[rounds, 1])?, 128])?,
+        ])?;
+        let scratch = add(&[
+            matrix,
+            mul(&[domain, 8])?,
+            mul(&[8, domain, challenge])?,
+            mul(&[6, proof])?,
+            mul(&[u64::try_from(case.threads)?, 2, MIB])?,
+        ])?;
+        let subtotal = add(&[coefficients, matrix, trees, scratch])?;
+        let peak = add(&[subtotal, subtotal / 4, 32 * MIB])?;
         Ok(Self {
             coefficients,
             matrix,
@@ -62,6 +68,19 @@ impl Estimate {
             peak,
         })
     }
+}
+
+fn mul(values: &[u64]) -> Result<u64> {
+    values.iter().try_fold(1u64, |a, &b| {
+        a.checked_mul(b)
+            .ok_or_else(|| "memory estimate overflow".into())
+    })
+}
+fn add(values: &[u64]) -> Result<u64> {
+    values.iter().try_fold(0u64, |a, &b| {
+        a.checked_add(b)
+            .ok_or_else(|| "memory estimate overflow".into())
+    })
 }
 
 #[derive(Debug)]
@@ -166,7 +185,7 @@ pub fn admit(estimate: &Estimate, settings: &Settings, available: &Available) ->
 }
 pub fn describe(case: &Case, estimate: &Estimate, available: &Available) -> String {
     format!(
-        "{}: exact parameters PASS; estimated bytes coefficients={} matrix={} trees={} scratch={} peak_with_overhead={}; available_memory_bytes={:?} available_cpus={:?}",
+        "{}: geometry valid; security not evaluated; estimated bytes coefficients={} matrix={} trees={} scratch={} peak_with_overhead={}; available_memory_bytes={:?} available_cpus={:?}",
         case.label(),
         estimate.coefficients,
         estimate.matrix,

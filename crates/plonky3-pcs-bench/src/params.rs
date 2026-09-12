@@ -13,6 +13,9 @@ use crate::{
     crypto::{BaseMmcs, ChallengeMmcs, Challenger, mmcs},
 };
 
+/// Fixed comparison FRI geometry, independent of parameterized BrakeFRI.
+pub const FRI_TERMINAL_COEFFICIENTS: usize = 128;
+
 pub type Fri<F, EF> = TwoAdicFriPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>>;
 pub type Stir<F, EF> =
     TwoAdicStirPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>, EF, Challenger<F>>;
@@ -23,7 +26,7 @@ pub fn fri<F: CanonicalField + TwoAdicField, EF: ExtensionField<F>>() -> Fri<F, 
         mmcs(0),
         FriParameters {
             log_blowup: 1,
-            log_final_poly_len: brakefri_primitives::TERMINAL_COEFFICIENTS.ilog2() as usize,
+            log_final_poly_len: FRI_TERMINAL_COEFFICIENTS.ilog2() as usize,
             max_log_arity: 1,
             num_queries: 244,
             commit_proof_of_work_bits: 0,
@@ -71,7 +74,7 @@ impl Audit {
             .join(";")
     }
 }
-fn union_bits(terms: &[f64]) -> f64 {
+pub(crate) fn union_bits(terms: &[f64]) -> f64 {
     let weakest = terms.iter().copied().fold(f64::INFINITY, f64::min);
     weakest - libm::log2(terms.iter().map(|b| libm::exp2(weakest - b)).sum())
 }
@@ -81,6 +84,9 @@ where
     EF: ExtensionField<F> + TwoAdicField,
 {
     case.validate()?;
+    if case.protocol == Protocol::Whir {
+        return crate::whir_params::audit(case);
+    }
     if case.log_n + 1 > F::TWO_ADICITY {
         return Err("initial domain exceeds base-field two-adicity".into());
     }
@@ -91,6 +97,7 @@ where
         return Err("challenge field/domain gap too small".into());
     }
     let result = match case.protocol {
+        Protocol::Whir => unreachable!("WHIR uses its own parameter audit"),
         Protocol::Fri => {
             let n = (1usize << case.log_n) as f64;
             let alpha = (3.0 * n + 1.0) / (4.0 * n);
@@ -102,7 +109,7 @@ where
             ];
             Audit {
                 bits: union_bits(&terms),
-                terminal: 128,
+                terminal: FRI_TERMINAL_COEFFICIENTS,
                 queries: vec![244],
                 radii: vec![1.0 - alpha],
             }

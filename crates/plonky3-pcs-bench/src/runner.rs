@@ -11,7 +11,6 @@ use brakefri_runtime::ExecutionContext;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::Pcs;
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
-use p3_f128_adapter::{F128, F128Quadratic};
 use p3_field::{
     ExtensionField, TwoAdicField, coset::TwoAdicMultiplicativeCoset,
     extension::CubicTrinomialExtensionField,
@@ -20,7 +19,7 @@ use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use serde::de::DeserializeOwned;
 use std::time::Instant;
 
-type GoldilocksCubic = CubicTrinomialExtensionField<Goldilocks>;
+pub(crate) type GoldilocksCubic = CubicTrinomialExtensionField<Goldilocks>;
 
 #[cfg(test)]
 #[path = "runner_tests.rs"]
@@ -29,7 +28,7 @@ mod tests;
 /// SplitMix64-v1 fixture stream, matching BrakeFRI's coefficient fixtures.
 /// Never used for internal Fiat-Shamir challenges.
 #[derive(Clone)]
-struct Fixture(u64);
+pub(crate) struct Fixture(pub(crate) u64);
 impl Fixture {
     fn word(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e3779b97f4a7c15);
@@ -38,7 +37,7 @@ impl Fixture {
         z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
         z ^ (z >> 31)
     }
-    fn field<F: CanonicalField>(&mut self) -> F {
+    pub(crate) fn field<F: CanonicalField>(&mut self) -> F {
         loop {
             let mut bytes = [0; 16];
             for chunk in bytes[..F::BYTE_WIDTH].chunks_exact_mut(8) {
@@ -53,7 +52,6 @@ impl Fixture {
 pub fn audit(case: &Case) -> Result<Audit> {
     match case.field {
         Field::Goldilocks => params::audit::<Goldilocks, GoldilocksCubic>(case),
-        Field::F128 => params::audit::<F128, F128Quadratic>(case),
     }
 }
 pub fn run(case: &Case, settings: &Settings) -> Result<()> {
@@ -66,12 +64,9 @@ pub fn run(case: &Case, settings: &Settings) -> Result<()> {
         (Field::Goldilocks, Protocol::Stir) => {
             run_generic::<Goldilocks, GoldilocksCubic, _>(case, settings, params::stir)
         }
-        (Field::F128, Protocol::Fri) => {
-            run_generic::<F128, F128Quadratic, _>(case, settings, params::fri)
-        }
-        (Field::F128, Protocol::Stir) => {
-            run_generic::<F128, F128Quadratic, _>(case, settings, params::stir)
-        }
+        (Field::Goldilocks, Protocol::Whir) => run_trials(case, settings, |points| {
+            crate::whir::trial(case, settings, points)
+        }),
     }
 }
 fn run_generic<F, EF, PCS>(case: &Case, settings: &Settings, make_pcs: fn() -> PCS) -> Result<()>
@@ -82,13 +77,23 @@ where
     PCS::Commitment: PartialEq,
     Challenger<F>: CanObserve<PCS::Commitment>,
 {
+    run_trials(case, settings, |points| {
+        trial::<F, EF, PCS>(case, settings, points, make_pcs)
+    })
+}
+fn run_trials(
+    case: &Case,
+    settings: &Settings,
+    measure: impl Fn(&mut Fixture) -> Result<Trial> + Sync,
+) -> Result<()> {
     let execution = ExecutionContext::new(case.threads)?;
     let mut csv = output::open(&case.csv_path(settings))?;
     let seed = settings.seed ^ 0x706f696e74730000 ^ case.log_n as u64;
     let mut points = Fixture(seed);
     eprintln!(
-        "START {} seed={} upstream_revision={} warmups=1 repetitions={}",
+        "START {} timing_model={} seed={} upstream_revision={} warmups=1 repetitions={}",
         case.label(),
+        case.protocol.timing_model(),
         settings.seed,
         output::REVISION,
         settings.repetitions
@@ -97,8 +102,7 @@ where
         resources::admit(case, settings)?;
         // PCS, DFT caches, retained trees and proof data are scoped to one trial.
         // All phases, including upstream parallel operations, use the same local pool.
-        let trial =
-            execution.install(|| trial::<F, EF, PCS>(case, settings, &mut points, make_pcs))?;
+        let trial = execution.install(|| measure(&mut points))?;
         if repetition == 0 {
             points = Fixture(seed);
             eprintln!("WARMUP VERIFIED {}", case.label());
@@ -114,12 +118,23 @@ where
     }
     Ok(())
 }
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let (value, trailing) = postcard::take_from_bytes(bytes)?;
     if !trailing.is_empty() {
         return Err("trailing bytes in benchmark encoding".into());
     }
     Ok(value)
+}
+fn decode_transport<C: DeserializeOwned + PartialEq, P: DeserializeOwned>(
+    expected: &C,
+    commitment_bytes: &[u8],
+    proof_bytes: &[u8],
+) -> Result<(C, P)> {
+    let commitment = decode(commitment_bytes)?;
+    if &commitment != expected {
+        return Err("decoded commitment mismatch".into());
+    }
+    Ok((commitment, decode(proof_bytes)?))
 }
 fn trial<F, EF, PCS>(
     case: &Case,
@@ -150,8 +165,8 @@ where
         .coset_dft_batch(RowMajorMatrix::new_col(coefficients), domain.shift())
         .to_row_major_matrix();
     let (commitment, state) = pcs.commit([(domain, evaluations)]);
-    let commitment_bytes = postcard::to_allocvec(&commitment)?;
     let commit_time = start.elapsed().as_secs_f64();
+    let commitment_bytes = postcard::to_allocvec(&commitment)?;
     drop(input_dft);
 
     // External opening point, supplied after commitment. Exclude the committed
@@ -177,8 +192,8 @@ where
     prover.observe(commitment.clone());
     FieldChallenger::<F>::observe_algebra_element(&mut prover, z);
     let (opened, proof) = pcs.open(vec![(&state, vec![vec![z]])], &mut prover);
-    let proof_bytes = postcard::to_allocvec(&proof)?;
     let prove_time = start.elapsed().as_secs_f64();
+    let proof_bytes = postcard::to_allocvec(&proof)?;
     drop(proof);
     let values = opened
         .first()
@@ -190,12 +205,10 @@ where
         return Err("expected one polynomial opening".into());
     }
 
+    // Strict transport decoding/binding is excluded, not protocol verification.
+    let (decoded_commitment, decoded_proof): (PCS::Commitment, PCS::Proof) =
+        decode_transport(&commitment, &commitment_bytes, &proof_bytes)?;
     let start = Instant::now();
-    let decoded_commitment: PCS::Commitment = decode(&commitment_bytes)?;
-    if decoded_commitment != commitment {
-        return Err("decoded commitment mismatch".into());
-    }
-    let decoded_proof: PCS::Proof = decode(&proof_bytes)?;
     let mut verifier = fresh_challenger();
     verifier.observe(decoded_commitment.clone());
     FieldChallenger::<F>::observe_algebra_element(&mut verifier, z);
