@@ -1,102 +1,139 @@
 # BrakeFRI
 
-Standalone Rust coefficient-input BrakeFRI PCS with both field profiles, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and a measured Rust CLI. The retained [BrakeFRI results](results/BrakeFRI/) use the current `m=64` geometry and 128-coefficient terminal polynomial, with one discarded warmup and five measured trials per configuration. New runs default to `results/`.
+Rust coefficient-input BrakeFRI PCS over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. See [BrakeFRI.md](BrakeFRI.md) for the protocol and soundness derivation; [WHIR.md](WHIR.md) is the reference paper, not the WHIR benchmark manual.
 
-The production API accepts exactly `2^log_n` coefficients in ascending monomial order, for `log_n=14..30`. Parameters are fixed at `m=64`, blowup `2` (rate `1/2`), and `244` replacement-sampled queries. Folding stops at 128 coefficients after `t=log_n-13` rounds. The verifier reconstructs the 256 terminal evaluations and their Merkle root, checks the terminal evaluation claim, and uses those values for query endpoints. The minimum size ensures at least one fold as required by the protocol.
+## Parameters and security
 
-Both field profiles satisfy the paper's 100-bit **interactive** bound throughout this range; the worst case at `n=2^30` is about **100.589 bits**. See [the exact parameter analysis](docs/terminal-polynomial-security.md). This bound excludes hash collision and Fiat–Shamir compilation losses. Proofs and transcript identifiers now use [wire format v2](docs/wire-format.md).
+Every BrakeFRI invocation requires complete public parameters, via CLI flags or an explicitly loaded TOML file:
 
-Hashing uses Plonky3's `p3-blake3` (`Blake3`), compiled with its `neon` feature for the aarch64 intrinsics path. Leaf hashing reserves the complete preimage capacity, including its 11-byte header; transcript hashing reserves capacity using the input iterator's length hint. Both submit the assembled bytes through `hash_slice`, which delegates to `hash_iter_slices`. Internal nodes use a fixed 65-byte stack buffer. Leaf hashing parallelism comes from the Merkle tree construction's Rayon batches.
+`(base_field, extension_degree, log_d, m, blowup, terminal_coefficients, num_queries)`.
 
-## Plonky3 FRI and STIR PCS benchmarks
+The input contains at most `d = 2^log_d` ascending monomial coefficients and is padded internally. Derived geometry is `k=d/m`, `N=blowup*k`, and `t=log2(k/terminal_coefficients)`. At least one binary fold is required. The base FFT domain is limited to `2^32`, independently of extension degree. F128 is not supported.
 
-The independent [`plonky3-pcs-bench`](crates/plonky3-pcs-bench/README.md) binary benchmarks upstream FRI and STIR PCS implementations for `2^20..2^30` coefficients, using Goldilocks cubic and F128 quadratic challenge fields, initial rate `1/2`, and zero PoW. It provides `run`, `preflight`, and `sweep` commands, with threads `[1, 32]`, one warmup and five measured repetitions. See the [parameters, usage and measurement details](crates/plonky3-pcs-bench/README.md).
+**The Rust API validates geometry, not security.** The independent [Python calculator](scripts/brakefri_queries.py) checks the unique-decoding IOP bound; it does not certify Fiat–Shamir/hash security or knowledge soundness and does not automatically change benchmark parameters.
 
-## Build and check
+## Build and test
 
-Use Rust 1.95 or newer. Dependencies resolve from crates.io and the public Plonky3 Git repository. All `p3-*` crates use the compatible revision in `Cargo.toml` and `Cargo.lock`; the F128 adapter uses Winterfell `winter-math` arithmetic. No local upstream checkout is required.
+Use Rust 1.95+, Python 3.11+, and Matplotlib 3.10+ for plotting. Plonky3 revisions are pinned in `Cargo.toml` and `Cargo.lock`; no local upstream checkout is needed.
 
 ```sh
-cargo build --release -p brakefri-bench --locked
-cargo fmt --all -- --check
+cargo build --release -p brakefri-bench -p plonky3-pcs-bench --locked
 cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 ```
 
-Use the same parallel-enabled release binary for every thread setting. The benchmark accepts `threads` values of 1 or 32; the selected value controls the initialized local Rayon pool for commit, prove, and verify. Upstream DFT and Merkle construction share that pool through `install`. Independent oracle authentication uses coarse jobs when the other scalar trees contain at least 256 opened leaves. This cutoff is a work heuristic, not a measured crossover. Transcript operations, Horner evaluation, combinations, folds, layout/copy passes, query derivation, multiproof assembly, serialization, and local fold checks stay sequential. The library never initializes a global pool.
+For coverage, targeted commands, and optional formatting/lint checks, see [TESTING.md](TESTING.md). Tests use small fixtures and disposable outputs, not production benchmark sweeps.
 
-## Commands
+## BrakeFRI benchmark
 
-Run commands from the repository root, or provide an explicit config path. `run` uses the configured repetitions, not necessarily one trial.
+[configs/brakefri.toml](configs/brakefri.toml) contains nine tuned cases for `log_d=20..28`, Goldilocks, `blowup=2`, `terminal_coefficients=256`, and a 100-bit IOP target. Parameters minimize expected protocol communication with multiproof sharing under that terminal-size constraint. They do not necessarily minimize runtime.
+
+| log_d | extension_degree | m | num_queries |
+|---:|---:|---:|---:|
+| 20–21 | 2 | 32 | 241 |
+| 22–25 | 2 | 64 | 242 |
+| 26 | 2 | 64 | 244 |
+| 27–28 | 3 | 64 | 241 |
 
 ```sh
-target/release/brakefri-bench --help
-target/release/brakefri-bench run --help
-target/release/brakefri-bench preflight --help
-target/release/brakefri-bench sweep --help
+# Geometry and resource admission only; no proof allocation or CSV writes.
+target/release/brakefri-bench preflight --config configs/brakefri.toml --threads 32
 
-# Quick verified API case; override the repetition policy explicitly.
-target/release/brakefri-bench run \
-  --field goldilocks-quadratic --log-n 14 --threads 1 \
-  --repetitions 1 --out results/quick
+# Production run: nine cases, one discarded warmup + five trials per case.
+# Use a fresh output root to avoid appending to an existing campaign.
+target/release/brakefri-bench sweep --config configs/brakefri.toml --threads 32 --out results-new
 
-# A configured case: five measured trials at log_n=20.
-target/release/brakefri-bench run \
-  --field goldilocks-quadratic --log-n 20 --threads 1
-
-target/release/brakefri-bench run \
-  --field f128-base --log-n 24 --threads 32
-
-# Exact checks and allocation estimates; no proof data or numeric CSV is produced.
-target/release/brakefri-bench preflight \
-  --fields goldilocks-quadratic,f128-base \
-  --log-n 20..30 --threads 1,32
-
-# A Blake3 series. Use a fresh --out directory for a new series.
-target/release/brakefri-bench sweep \
-  --fields goldilocks-quadratic,f128-base \
-  --log-n 20..30 --threads 1,32 \
-  --config configs/brakefri.toml --out /tmp/brakefri-blake3-series
+# One case: run reads [pp], not [[cases]].
+target/release/brakefri-bench run --config configs/brakefri.toml --threads 32 --out results-one
 ```
 
-`run` requires one field, size, and thread count of 1 or 32. The default sweep uses both fields, sizes 20–30, and threads `[1, 32]`: 44 configurations, 44 discarded warmups, and 220 measured trials. `sweep` and `preflight` accept lists and an inclusive size range, or use the corresponding config defaults. Iteration order is fields, increasing sizes, then threads, preserving list order. Unknown fields, unsupported sizes, thread counts other than 1 or 32, incompatible protocol settings, unknown TOML keys, and zero repetitions are rejected. Hashing is fixed to Blake3.
+No config is loaded implicitly. `sweep` and `preflight` use the complete `[[cases]]`; `run` uses `[pp]` (the `log_d=20` case). CLI public-parameter flags override every selected case, so do not override them when reproducing the tuned campaign. The config retains thread choices `[1,32]`; `--threads 32` selects only the measurements currently stored in the repository. Use `--help` for lists/ranges and runtime options.
 
-CLI `--out`, `--seed`, `--repetitions`, `--max-memory-mib`, and `--time-limit-seconds` override the respective benchmark settings. Matrix CLI lists and `--log-n` override config selection. Output paths are relative to the working directory. The complete config is checked even when CLI values override benchmark selection. The benchmark config uses a single `repetitions = 5` setting for every size, including API checks at sizes 14–19. CLI `--repetitions` overrides that setting.
+Each case runs in a separate child process and local Rayon pool; supported benchmark thread counts are 1 and 32. There is no explicit CPU/NUMA affinity. Fixture generation uses deterministic `SplitMix64-v1`, seed `20260906`, with separate coefficient/point streams; Fiat–Shamir challenges do not use this generator. Each measured repetition commits afresh and opens at the next point. Warmup resets the point stream before measurements.
 
-## Fixtures, timing, and bytes
+Preflight estimates memory, including retained state, temporary buffers, 25% overhead and 32 MiB. Admission uses the smaller of `--max-memory-mib` and 80% of detected available memory. This is not an OS RSS cap. `--time-limit-seconds` bounds the whole child, including setup and warmup. Failed cases return nonzero; only completed verified trials produce rows. Sweeps continue to later cases after a failure.
 
-Fixtures use the documented `SplitMix64-v1` generator with default seed `20260906`, canonical little-endian rejection sampling, and separate coefficient/point streams. This noncryptographic generator never supplies Fiat–Shamir challenges. For a given field, size, and seed, coefficients are identical across trials and thread counts. Successive repetitions select fresh points after commitment. Separate command invocations reproduce the same point sequence. No trial nonce enters the transcript.
+## Query count and theoretical communication
 
-Each configuration first executes one complete warmup through commit, prove, serialization, and encoded verification. Its timings and proof size are discarded, and it produces no CSV row; successful completion is logged as `WARMUP VERIFIED`. A failed warmup aborts the case. The warmup uses the same polynomial and first evaluation point as the formal trials, then resets the point stream so measured inputs remain reproducible. Its PCS instance and proof data are released before formal repetitions.
+```sh
+# Reads only [pp]; ignores num_queries and [[cases]].
+python3 scripts/brakefri_queries.py --config configs/brakefri.toml --security-bits 100 --json
 
-The warmup and every measured repetition construct fresh public PCS configuration and consume a freshly generated coefficient vector. Commit retains that vector and its tree-owned encoding; prove borrows the immutable state. All opening temporaries drop synchronously before the next repetition. The pool is initialized outside timers and reused across the case. Each configuration runs in a fresh child process; its repetitions commit, prove, then verify in that same process and pool. Verification consumes the newly encoded proof immediately after proving, while prover state remains alive. There is no explicit CPU/NUMA affinity. Lazy DFT twiddle construction is charged to each commit.
+# Omitted extension degree: minimize feasible e first, then Q.
+python3 scripts/brakefri_queries.py --base-field goldilocks --log-d 20 \
+  --m 64 --blowup 2 --terminal-coefficients 128 --security-bits 100
+```
 
-- `commit_time`: ready coefficients through padded encoding, DFT, tree construction, returned state/root, and raw commitment encoding.
-- `prove_time`: retained state and newly supplied point through claims, combinations, folds, trees, multiproofs, and evaluation-proof encoding.
-- `verify_time`: actual bytes through bounded decoding, expected-root matching, typed verification, and all fold checks.
+With `rho=1/blowup`, `k_t=terminal_coefficients`, and `A_t=blowup*(d-k_t)+m-1+t`, the calculator finds the minimum integer `Q>=1` satisfying
 
-Times are elapsed seconds. Fixture generation, point selection, process startup, public configuration/pool creation, and output writes are outside timers. `proof_size` is the checked sum of the two actual verified buffers: **32 raw initial-root bytes once, plus the evaluation-proof bytes**. Public `z`, `y`, configuration, and transcript context are excluded. A numeric row is appended only after successful verification of those same bytes against the expected commitment and public claim.
+```text
+((1+rho)/2)^Q + A_t/q^e <= 2^-security_bits
+```
 
-## Results and resources
+It uses exact integer comparisons and the actual Goldilocks order `q=2^64-2^32+1`. If `q^e <= A_t*2^security_bits`, no finite query count suffices. An omitted degree is selected from `{1,2,3,5}`; an explicit degree is never upgraded. Minimizing feasible `e` is not the same as minimizing proof size. Query positions are sampled with replacement, so `Q` can exceed `N`.
 
-Raw BrakeFRI trials append to `<out>/BrakeFRI/goldilocks.csv` or `<out>/BrakeFRI/f128.csv`. FRI/STIR use `<out>/FRI/<base_field>.csv` and `<out>/STIR/<base_field>.csv`, with compact columns `log_n,rho,threads,commit_time,prove_time,verify_time,proof_size`. Every CSV has exactly this header:
+Default output is `Q` on stdout and selected-degree/size information on stderr; `--json` emits a structured report. The Python APIs are `minimum_queries`, `select_parameters`, and `theoretical_proof_size`. Custom `--q` and explicit degrees outside runtime support are mathematical inputs only; field construction is the caller's responsibility.
+
+The calculator's size model uses **independent paths, without multiproof or leaf deduplication**. For `n=log2(N)`, its base elements, extension elements, and hash counts are:
+
+```text
+B = m*(1+2*Q)
+E = 2*t+k_t+2*Q*(t-1)
+H = 1+t+2*Q*(t*n-t*(t-1)/2)
+bytes = 8*B + 8*e*E + 32*H
+```
+
+This counts prover-to-verifier communication, including the initial commitment once, but excludes verifier messages, query indices, terminal evaluation tables and serialization framing. It is not the actual wire size. The tuned config was selected using a separate multiproof expectation calculation; the calculator does not perform that optimization.
+
+## Timing and result files
+
+Current BrakeFRI, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
+
+- **Commit:** encoding/FFT, Merkle construction and native commitment work; stops before serialization.
+- **Open:** complete typed proof generation, including transcript, folds and multiproofs; stops before serialization.
+- **Verify:** full typed verification of the wire-round-trip decoded proof.
+
+Serialization, decoding, canonical encoding checks and transport consistency checks still run, outside timers. Fixture generation, pool/process setup and CSV writes are also outside timers. RS encoding and lazy DFT work remain timed. BrakeFRI's `verify_encoded` API retains end-to-end checks.
+
+`proof_size_KiB` is the actual serialized commitment-plus-proof length, not the independent-path estimate. BrakeFRI includes its initial 32-byte root once, plus the evaluation proof including version/context framing. Times are milliseconds; KiB is bytes/1024. Each verified trial is a separate row, rounded to three decimals.
+
+**Runner output and curated plotting input are different paths:**
+
+| Purpose | Path |
+|---|---|
+| BrakeFRI runner output | `<out>/BrakeFRI/v3/goldilocks.csv` |
+| Curated BrakeFRI plotting input | `results/BrakeFRI/goldilocks.csv` |
+| Other protocol CSVs | `<out>/<protocol>/goldilocks.csv` |
+| Comparison figure | `results/figures/goldilocks/threads_32.png` |
+
+The curated BrakeFRI file contains the latest 45 measured rows: nine configured sizes, five trials each, 32 threads, terminal size 256, core-v1 timing. It records complete public parameters without a `protocol_version` column (the proof format remains v3):
 
 ```csv
-log_n,m,k,rho,threads,commit_time,prove_time,verify_time,proof_size
+base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB
 ```
 
-Existing headers must match exactly; incomplete final rows are rejected. Repetitions remain separate rows. Use a separate output directory for independent or concurrent series; simultaneous writers to one series are unsupported. The two retained CSVs under `results/BrakeFRI/` each contain 110 rows, covering 44 configurations and 220 trials in total. The [four figures](results/figures/) show both field profiles with 1 and 32 threads. These measurements use `m=64`, rate `1/2`, 244 queries, and a 128-coefficient terminal polynomial. All 44 configurations completed one discarded warmup and five verified measured trials.
+Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. Other protocols' existing measurements were not re-run with the latest BrakeFRI campaign, so their timing compatibility is not established by the figure.
 
-For new-format BrakeFRI series under `results/BrakeFRI/`, validate with `python3 scripts/plot_results.py --protocols brakefri --validate-only`, then generate its figures with `python3 scripts/plot_results.py --protocols brakefri` (requires Matplotlib 3.10 or newer). To overlay BrakeFRI, FRI and STIR, run `python3 scripts/plot_results.py`; it reads BrakeFRI from `--results` (default `results`) and FRI/STIR from `--plonky3-results` (default `results`). Use `--protocols fri,stir` for a two-protocol comparison. Comparison figures default to `results/figures/<base_field>/threads_<count>.png`; `--out` overrides the figure root. Each image has four metric panels with protocol colors and a legend showing only protocol names. Points are medians of five measured trials (`--repetitions` overrides this count). Only `2^20..2^28` is plotted; rows for `2^29` and `2^30` are ignored. By default, each base field uses thread counts shared by all selected protocols. Use `--threads 32` (or `--threads 1,32`) to require explicit counts for every protocol. Included configurations must cover the complete plotted range; incomplete data is rejected. Times use milliseconds and proof size uses KiB. Vertical axes use base-2 scales with bounds shared across protocols and threads for each base field and metric.
+## Comparison protocols and plotting
 
-The retained BrakeFRI CSVs have been moved to `results/BrakeFRI/goldilocks.csv` and `results/BrakeFRI/f128.csv` without changing their contents. The plotting script requires the new paths; legacy CSVs under `results/blake3/` are no longer read. Compact FRI/STIR CSVs omit seed, revision and repetition IDs, so campaign compatibility must be ensured by the caller; only row counts, coverage and the remaining values can be validated.
+`plonky3-pcs-bench` benchmarks upstream FRI/STIR over Goldilocks with cubic challenges, initial rate `1/2` and zero PoW (`log_n=20..30`). Its native multilinear WHIR profile uses hypercube evaluations (`log_n=20..28`), cubic challenges, rate `1/2`, zero PoW and a whole-protocol 100-bit algebraic budget under JohnsonBound. WHIR's native proof includes the opening value. See the executable [FRI/STIR parameters and audit](crates/plonky3-pcs-bench/src/params.rs) and [WHIR parameters and audit](crates/plonky3-pcs-bench/src/whir_params.rs).
 
-Benchmark runs save only the result CSV files. Case starts, verified trials, resource estimates, and failures are printed to stderr; no `run.log` or `metadata/` files are created.
+```sh
+target/release/plonky3-pcs-bench preflight --protocols fri,stir,whir --threads 32
+python3 scripts/plot_results.py --threads 32 --validate-only
+python3 scripts/plot_results.py --threads 32
+```
 
-Preflight checks exact integer soundness inequalities and reports retained coefficients, the initial matrix, all retained tree digests, and scratch estimates. Scratch conservatively includes a full matrix normalization buffer, twiddles, challenge/fold buffers, simultaneous typed/wire/decoded proofs, and worker stacks; the estimate adds 25% allocation overhead plus 32 MiB. These are capacity estimates, not measured RSS. Available resources include CPU parallelism and Linux `MemAvailable`, restricted by readable cgroup v1/v2 memory headroom and ancestor limits. Other platforms report unknown memory and require an explicit `--max-memory-mib` budget.
+The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers BrakeFRI, FRI, STIR, WHIR, BaseFold and Shockwave. BrakeFRI requires the full public-parameter schema: legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
 
-Admission uses the smaller of a configured `max_memory_mib` and 80% of detected available memory. The memory option is an **estimate-based admission cap**, not an operating-system RSS limit. Requested CPU oversubscription is permitted and visible in preflight. `run` and `sweep` isolate each case in a child process and wait for it before starting another. Optional `time_limit_seconds` is a wall limit for the whole child case, including setup, fixtures, the warmup, and all measured repetitions; the parent polls every 20 ms, kills and reaps an expired child. OS termination and other child failures return a nonzero status. Completed verified rows remain; unfinished trials are reported as unmeasured on stderr. Sweeps continue with later cases and exit nonzero if any case failed. No missing measurement is extrapolated or replaced by zeros.
+Default sizes are `20..28`; `--log-d`/`--log-sizes` selects others. `--protocols` restricts protocols, `--results` selects an input root, `--plonky3-results` overrides only FRI/STIR/WHIR inputs, and `--out` selects the figure root. Missing explicitly selected data or incomplete trial coverage is an error. Means use five rows per point, except Shockwave's single supplied row; `--repetitions` overrides this. Zero timings use linear axes; positive-only metrics use base-2 log axes. Input semantics, security assumptions and PoW may differ across protocols: these are native-configuration comparisons, not identical-task security benchmarks.
 
-## Workspace API
+## Workspace layout
 
-`brakefri-core` exports validated `BrakeParams`, `BrakeFri<P>`, immutable `ProverData`, typed proof messages, explicit commitment/evaluation codecs, and `verify_encoded` for expected-root matching and byte accounting. `brakefri-primitives` supplies field profiles, Blake3 role-separated hashing, natural-order DFT, checked MMCS, and the byte transcript. `p3-f128-adapter` wraps Winterfell F128 with current Plonky3 traits. `brakefri-runtime` owns the local execution budget. `brakefri-bench` supplies configuration, resource preflight, sequential case scheduling, and measured CSV output.
+- `brakefri-core`: public parameters, typed PCS, immutable prover state, codecs and verification.
+- `brakefri-primitives`: Goldilocks profiles, canonical hashing, DFT, MMCS and transcript.
+- `brakefri-runtime`: local execution budget and Rayon pool.
+- `brakefri-bench`: configuration, resource admission, isolated scheduling and CSV output.
+- `plonky3-pcs-bench`: independent FRI/STIR/WHIR benchmarks and parameter audits.
+
+V3 binds complete public parameters and encoding conventions into the transcript. `BrakeFri<P>` requires validated parameters matching the chosen field profile; untrusted bytes cannot choose the profile or statement. Historical implementation plans under `docs/` are archival, not current usage instructions; that directory remains ignored by Git.
