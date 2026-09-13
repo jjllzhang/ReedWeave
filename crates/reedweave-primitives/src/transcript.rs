@@ -1,4 +1,5 @@
-//! Sequential byte challenger and locally constructed protocol context.
+//! ReedWeave_UB sequential byte challenger and trusted protocol context.
+//! A future ReedWeave_JB transcript must use a distinct protocol label and schedule.
 use crate::fields::{
     CanonicalField, Goldilocks, GoldilocksCubic, GoldilocksQuadratic, GoldilocksQuintic,
 };
@@ -10,7 +11,7 @@ use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
 use p3_symmetric::CryptographicHasher;
 use thiserror::Error;
 
-pub const PROTOCOL_LABEL: &[u8] = b"ReedWeave-Section3-Multiproof";
+pub const PROTOCOL_LABEL: &[u8] = b"ReedWeave_UB-Section3-Multiproof";
 pub const ENCODING_ID: &[u8] = b"canonical-coordinates-multiproof";
 
 mod sealed {
@@ -73,10 +74,11 @@ impl TranscriptContext {
             return Err(bad);
         }
         let k = d / self.m;
-        if k < 2
+        if k < 4
             || !k.is_power_of_two()
             || self.blowup < 2
             || !self.blowup.is_power_of_two()
+            || self.terminal_coefficients < 2
             || !self.terminal_coefficients.is_power_of_two()
             || self.terminal_coefficients > k / 2
         {
@@ -222,8 +224,9 @@ impl<P: FieldProfile> Transcript<P> {
         self.event(5, &payload);
         Ok(())
     }
+    /// Only the t-1 intermediate oracles have commitments.
     pub fn observe_round_root(&mut self, j: usize, root: &Digest) -> Result<(), TranscriptError> {
-        if j >= self.rounds {
+        if j >= self.rounds - 1 {
             return Err(TranscriptError::Shape);
         }
         let mut payload = (j as u64).to_le_bytes().to_vec();

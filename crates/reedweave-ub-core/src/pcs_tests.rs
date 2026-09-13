@@ -3,8 +3,8 @@ use crate::{BaseField, PublicParams};
 use reedweave_primitives::transcript::{
     GoldilocksBaseProfile, GoldilocksCubicProfile, GoldilocksProfile, GoldilocksQuinticProfile,
 };
-fn params<P: FieldProfile>(old_log: usize) -> BrakeParams {
-    BrakeParams::new(PublicParams {
+fn params<P: FieldProfile>(old_log: usize) -> UbParams {
+    UbParams::new(PublicParams {
         base_field: BaseField::Goldilocks,
         extension_degree: P::PROFILE.extension_degree(),
         log_d: old_log - 10,
@@ -84,7 +84,7 @@ fn coefficient_word_folds_match_direct_polynomials_and_both_signs() {
 /// prover instead folds the retained words. Optionally corrupt one selected scalar
 /// oracle while keeping all scalar identities, roots, and authentications valid.
 fn reference<P: FieldProfile>(
-    pcs: &ReedWeave<P>,
+    pcs: &ReedWeaveUb<P>,
     state: &ProverData<P>,
     z: P::Base,
     execution: &ExecutionContext,
@@ -132,6 +132,7 @@ fn reference<P: FieldProfile>(
     }
     let mut point = z0;
     let mut rounds = Vec::new();
+    let mut oracle_roots = Vec::new();
     let mut layers = Vec::new();
     for j in 0..pcs.params.rounds() {
         let square = point.square();
@@ -172,17 +173,19 @@ fn reference<P: FieldProfile>(
                     }
             })
             .collect();
-        let (root, layer) = pcs
-            .scalar_mmcs
-            .commit(RowMajorMatrix::new_col(word), execution)
-            .unwrap();
-        transcript.observe_round_root(j, &root).unwrap();
+        if j + 1 < pcs.params.rounds() {
+            let (root, layer) = pcs
+                .scalar_mmcs
+                .commit(RowMajorMatrix::new_col(word), execution)
+                .unwrap();
+            transcript.observe_round_root(j, &root).unwrap();
+            oracle_roots.push(root);
+            layers.push(layer);
+        }
         rounds.push(Round {
             even_value: even,
             odd_value: odd,
-            next_oracle_root: root,
         });
-        layers.push(layer);
         point = square;
     }
     let terminal_coefficients = coefficients;
@@ -223,10 +226,11 @@ fn reference<P: FieldProfile>(
     (
         Opening {
             y,
-            proof: BrakeProof {
+            proof: UbProof {
                 context_id: pcs.params.transcript_context().identifier().unwrap(),
                 block_values: blocks,
                 rounds,
+                oracle_roots,
                 terminal_coefficients,
                 initial_opening,
                 scalar_openings,
@@ -239,7 +243,7 @@ fn reference<P: FieldProfile>(
 fn interoperability<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = params::<P>(15);
-    let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
     let coefficients: Vec<_> = (0..params.d())
         .map(|i| P::Base::from_usize(i + 3))
         .collect();
@@ -260,8 +264,8 @@ fn interoperability<P: FieldProfile>() {
     for (a, b) in production.proof.rounds.iter().zip(&reference.proof.rounds) {
         assert_eq!(a.even_value, b.even_value);
         assert_eq!(a.odd_value, b.odd_value);
-        assert_eq!(a.next_oracle_root, b.next_oracle_root);
     }
+    assert_eq!(production.proof.oracle_roots, reference.proof.oracle_roots);
     assert_eq!(
         production.proof.terminal_coefficients,
         reference.proof.terminal_coefficients
@@ -290,19 +294,11 @@ fn interoperability<P: FieldProfile>() {
             .iter()
             .any(|&c| c != P::Challenge::ZERO)
     );
-    // At z=0 this mutation preserves the terminal scalar evaluation. It must
-    // still fail reconstruction of the complete committed terminal oracle.
+    // At z=0 this mutation preserves the terminal scalar evaluation, but not
+    // the terminal query values. It also changes the transcript's query points.
     let mut forged = reference.proof.clone();
     forged.terminal_coefficients[1] += P::Challenge::ONE;
-    assert!(matches!(
-        pcs.verify(&commitment, z, reference.y, &forged, &execution),
-        Err(PcsError::Terminal)
-    ));
-    let (forged, _) = self::reference(&pcs, &state, z, &execution, Some(params.rounds() - 1));
-    assert!(matches!(
-        pcs.verify(&commitment, z, forged.y, &forged.proof, &execution),
-        Err(PcsError::Terminal)
-    ));
+    assert!(pcs.verify(&commitment, z, reference.y, &forged, &execution).is_err());
     for layer in 0..params.rounds() - 1 {
         let (forged, _) = self::reference(&pcs, &state, z, &execution, Some(layer));
         // The first inconsistent edge ends in pi_(layer+1). All earlier folds,
@@ -328,7 +324,7 @@ fn reference_prover_transcript_interoperability_and_authenticated_bad_folds() {
 fn bad_final_fold<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = params::<P>(16);
-    let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
     let omega = P::Base::two_adic_generator(params.log_domain_size());
     let mut matrix = vec![P::Base::ZERO; params.domain_size() * params.m()];
     for t in 0..params.domain_size() {
@@ -346,6 +342,7 @@ fn bad_final_fold<P: FieldProfile>() {
     let weights = power_weights(transcript.sample_challenge(), params.m());
     assert_ne!(weights[0], P::Challenge::ZERO);
     let mut rounds = Vec::new();
+    let mut oracle_roots = Vec::new();
     let mut layers = Vec::new();
     for j in 0..params.rounds() {
         transcript
@@ -365,17 +362,19 @@ fn bad_final_fold<P: FieldProfile>() {
                 }
             })
             .collect();
-        let (root, layer) = pcs
-            .scalar_mmcs
-            .commit(RowMajorMatrix::new_col(word), &execution)
-            .unwrap();
-        transcript.observe_round_root(j, &root).unwrap();
+        if j + 1 < params.rounds() {
+            let (root, layer) = pcs
+                .scalar_mmcs
+                .commit(RowMajorMatrix::new_col(word), &execution)
+                .unwrap();
+            transcript.observe_round_root(j, &root).unwrap();
+            oracle_roots.push(root);
+            layers.push(layer);
+        }
         rounds.push(Round {
             even_value: P::Challenge::ZERO,
             odd_value: P::Challenge::ZERO,
-            next_oracle_root: root,
         });
-        layers.push(layer);
     }
     transcript
         .observe_terminal(&vec![
@@ -388,10 +387,11 @@ fn bad_final_fold<P: FieldProfile>() {
     assert!(starts.iter().any(|&t| t < params.domain_size() / 2));
     assert!(starts.iter().any(|&t| t >= params.domain_size() / 2));
     let sets = query_sets(&params, &starts);
-    let proof = BrakeProof {
+    let proof = UbProof {
         context_id: params.transcript_context().identifier().unwrap(),
         block_values: blocks,
         rounds,
+        oracle_roots,
         terminal_coefficients: vec![P::Challenge::ZERO; params.terminal_coefficient_count()],
         initial_opening: pcs
             .initial_mmcs
@@ -428,7 +428,7 @@ fn authenticated_oracles_must_satisfy_the_final_fold() {
 fn nonempty_boundaries_and_exact_upstream_authentication() {
     let execution = ExecutionContext::new(2).unwrap();
     let params = params::<GoldilocksProfile>(18);
-    let pcs = ReedWeave::<GoldilocksProfile>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<GoldilocksProfile>::new(params.clone()).unwrap();
     type F = <GoldilocksProfile as FieldProfile>::Base;
     let (commitment, state) = pcs
         .commit(
@@ -471,9 +471,9 @@ fn nonempty_boundaries_and_exact_upstream_authentication() {
             .observe_round(j, round.even_value, round.odd_value)
             .unwrap();
         let _ = transcript.sample_challenge();
-        transcript
-            .observe_round_root(j, &round.next_oracle_root)
-            .unwrap();
+        if j + 1 < params.rounds() {
+            transcript.observe_round_root(j, &opening.proof.oracle_roots[j]).unwrap();
+        }
     }
     transcript
         .observe_terminal(&opening.proof.terminal_coefficients)
@@ -519,12 +519,12 @@ fn reference_algebra_across_geometries_points_and_short_inputs() {
     fn check<P: FieldProfile>() {
         let execution = ExecutionContext::new(1).unwrap();
         for (log_d, m, blowup, kt, q) in [
-            (1, 1, 2, 1, 1),
-            (4, 1, 4, 1, 70),
+            (2, 1, 2, 2, 1),
+            (4, 1, 4, 2, 70),
             (5, 4, 2, 2, 19),
             (6, 8, 8, 4, 3),
         ] {
-            let params = BrakeParams::new(PublicParams {
+            let params = UbParams::new(PublicParams {
                 base_field: BaseField::Goldilocks,
                 extension_degree: P::PROFILE.extension_degree(),
                 log_d,
@@ -534,7 +534,7 @@ fn reference_algebra_across_geometries_points_and_short_inputs() {
                 num_queries: q,
             })
             .unwrap();
-            let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+            let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
             for len in [0, params.d() - 1] {
                 let (root, state) = pcs
                     .commit(

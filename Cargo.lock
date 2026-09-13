@@ -812,32 +812,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reedweave-bench"
-version = "0.1.0"
-dependencies = [
- "clap",
- "reedweave-core",
- "reedweave-primitives",
- "reedweave-runtime",
- "serde",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "reedweave-core"
-version = "0.1.0"
-dependencies = [
- "p3-field",
- "p3-matrix",
- "postcard",
- "reedweave-primitives",
- "reedweave-runtime",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "reedweave-primitives"
 version = "0.1.0"
 dependencies = [
@@ -861,6 +835,32 @@ name = "reedweave-runtime"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "reedweave-ub-bench"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "reedweave-primitives",
+ "reedweave-runtime",
+ "reedweave-ub-core",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "reedweave-ub-core"
+version = "0.1.0"
+dependencies = [
+ "p3-field",
+ "p3-matrix",
+ "postcard",
+ "reedweave-primitives",
+ "reedweave-runtime",
+ "serde",
  "thiserror",
 ]
 

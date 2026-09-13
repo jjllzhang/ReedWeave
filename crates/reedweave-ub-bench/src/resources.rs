@@ -26,10 +26,10 @@ impl Estimate {
         let rounds = u64::try_from(params.rounds())?;
         let coefficients = mul(&[d, 8])?;
         let matrix = mul(&[u64::try_from(params.blowup())?, coefficients])?;
-        // Initial base-row tree and every folded scalar tree, including terminal.
+        // Initial base-row tree and t-1 intermediate scalar trees; no terminal tree.
         let mut trees = 0;
         let mut layer = domain;
-        for _ in 0..=params.rounds() {
+        for _ in 0..params.rounds() {
             let nodes = mul(&[2, layer])?
                 .checked_sub(1)
                 .ok_or("tree estimate underflow")?;
@@ -48,7 +48,7 @@ impl Estimate {
             mul(&[2, q, rounds, u64::try_from(params.log_domain_size())?, 32])?,
             mul(&[m, challenge])?,
             mul(&[2, rounds, challenge])?,
-            mul(&[rounds, 32])?,
+            mul(&[rounds - 1, 32])?,
             mul(&[add(&[rounds, 1])?, 128])?,
         ])?;
         let scratch = add(&[

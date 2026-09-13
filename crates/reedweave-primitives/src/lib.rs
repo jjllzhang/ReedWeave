@@ -1,4 +1,5 @@
-//! Reusable ReedWeave field encodings, hashes, DFT, Merkle commitments and transcript.
+//! Shared ReedWeave field encodings, hashes, DFT and Merkle commitments.
+//! The current `transcript` module implements the ReedWeave_UB schedule.
 pub mod dft;
 pub mod fields;
 pub mod hash;

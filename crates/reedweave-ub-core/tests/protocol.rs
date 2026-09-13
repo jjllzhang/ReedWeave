@@ -1,5 +1,5 @@
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
-use reedweave_core::{BaseField, BrakeParams, PcsError, PublicParams, ReedWeave};
+use reedweave_ub_core::{BaseField, UbParams, PcsError, PublicParams, ReedWeaveUb};
 use reedweave_primitives::transcript::{
     FieldProfile, GoldilocksBaseProfile, GoldilocksCubicProfile, GoldilocksProfile,
     GoldilocksQuinticProfile,
@@ -9,13 +9,13 @@ use reedweave_runtime::ExecutionContext;
 fn cases<P: FieldProfile>() {
     let execution = ExecutionContext::new(2).unwrap();
     for (log_d, m, blowup, kt, q) in [
-        (1, 1, 2, 1, 1),
-        (4, 1, 4, 1, 70),
+        (2, 1, 2, 2, 1),
+        (4, 1, 4, 2, 70),
         (5, 4, 2, 2, 19),
         (6, 8, 8, 4, 3),
     ] {
         let params = params::<P>(log_d, m, blowup, kt, q);
-        let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+        let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
         for kind in 0..4 {
             let mut coefficients = vec![P::Base::ZERO; params.d()];
             match kind {
@@ -57,7 +57,7 @@ fn cases<P: FieldProfile>() {
                 pcs.verify(&commitment, z, expected_y, &opening.proof, &execution)
                     .unwrap();
                 let bytes =
-                    reedweave_core::codec::encode_eval_proof(&params, &opening.proof).unwrap();
+                    reedweave_ub_core::codec::encode_eval_proof(&params, &opening.proof).unwrap();
                 assert_eq!(
                     pcs.verify_encoded(
                         &commitment,
@@ -93,13 +93,15 @@ fn cases<P: FieldProfile>() {
                 }
                 assert_eq!(opening.proof.terminal_coefficients.len(), kt);
                 assert_eq!(opening.proof.rounds.len(), params.rounds());
+                assert_eq!(opening.proof.oracle_roots.len(), params.rounds() - 1);
                 if params.rounds() == 1 {
+                    assert!(opening.proof.oracle_roots.is_empty());
                     assert!(opening.proof.scalar_openings.is_empty());
                 }
             }
             // Opening at two points does not change retained commitment state.
             let different =
-                ReedWeave::<P>::new(self::params::<P>(log_d + 1, m, blowup, kt, q)).unwrap();
+                ReedWeaveUb::<P>::new(self::params::<P>(log_d + 1, m, blowup, kt, q)).unwrap();
             assert!(matches!(
                 different.prove(&state, P::Base::ZERO, &execution),
                 Err(PcsError::StateMismatch)
@@ -139,7 +141,7 @@ fn honest_polynomials_all_supported_extensions() {
 fn malformed<P: FieldProfile>() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = params::<P>(6, 4, 2, 2, 19);
-    let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
     let coefficients = (0..params.d())
         .map(|i| P::Base::from_usize(i + 1))
         .collect();
@@ -152,7 +154,7 @@ fn malformed<P: FieldProfile>() {
                 .is_err()
         )
     };
-    for mutation in 0..27 {
+    for mutation in 0..29 {
         let mut proof = opening.proof.clone();
         match mutation {
             0 => {
@@ -166,10 +168,10 @@ fn malformed<P: FieldProfile>() {
             4 => proof.rounds.push(proof.rounds[0].clone()),
             5 => proof.rounds[0].even_value += P::Challenge::ONE,
             6 => proof.rounds[0].odd_value += P::Challenge::ONE,
-            7 => proof.rounds[0].next_oracle_root[0] ^= 1,
+            7 => proof.oracle_roots[0][0] ^= 1,
             8 => proof.terminal_coefficients[0] += P::Challenge::ONE,
             9 => proof.terminal_coefficients[1] += P::Challenge::ONE,
-            10 => proof.rounds.last_mut().unwrap().next_oracle_root[0] ^= 1,
+            10 => proof.oracle_roots.last_mut().unwrap()[0] ^= 1,
             11 => {
                 proof.initial_opening.rows[0].pop();
             }
@@ -202,6 +204,8 @@ fn malformed<P: FieldProfile>() {
                 proof.terminal_coefficients.pop();
             }
             26 => proof.terminal_coefficients.push(P::Challenge::ZERO),
+            27 => { proof.oracle_roots.pop(); }
+            28 => proof.oracle_roots.push([0; 32]),
             _ => unreachable!(),
         }
         reject(&proof);
@@ -222,7 +226,7 @@ fn malformed<P: FieldProfile>() {
         pcs.verify(&wrong_commitment, z, opening.y, &opening.proof, &execution)
             .is_err()
     );
-    let other_size = ReedWeave::<P>::new(self::params::<P>(4, 4, 2, 2, 19)).unwrap();
+    let other_size = ReedWeaveUb::<P>::new(self::params::<P>(4, 4, 2, 2, 19)).unwrap();
     assert!(
         other_size
             .verify(&commitment, z, opening.y, &opening.proof, &execution)
@@ -244,10 +248,10 @@ fn trusted_profile_and_parameter_binding() {
     let execution = ExecutionContext::new(1).unwrap();
     let params = params::<GoldilocksProfile>(5, 4, 2, 2, 19);
     assert!(matches!(
-        ReedWeave::<GoldilocksBaseProfile>::new(params.clone()),
+        ReedWeaveUb::<GoldilocksBaseProfile>::new(params.clone()),
         Err(PcsError::ProfileMismatch)
     ));
-    let pcs = ReedWeave::<GoldilocksProfile>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<GoldilocksProfile>::new(params.clone()).unwrap();
     let (commitment, state) = pcs
         .commit((0..params.d()).map(F::from_usize).collect(), &execution)
         .unwrap();
@@ -255,7 +259,7 @@ fn trusted_profile_and_parameter_binding() {
     pcs.verify(&commitment, F::TWO, opening.y, &opening.proof, &execution)
         .unwrap();
     let other_size =
-        ReedWeave::<GoldilocksProfile>::new(self::params::<GoldilocksProfile>(4, 4, 2, 2, 19))
+        ReedWeaveUb::<GoldilocksProfile>::new(self::params::<GoldilocksProfile>(4, 4, 2, 2, 19))
             .unwrap();
     assert!(
         other_size
@@ -270,8 +274,8 @@ fn params<P: FieldProfile>(
     blowup: usize,
     kt: usize,
     q: usize,
-) -> BrakeParams {
-    BrakeParams::new(PublicParams {
+) -> UbParams {
+    UbParams::new(PublicParams {
         base_field: BaseField::Goldilocks,
         extension_degree: P::PROFILE.extension_degree(),
         log_d,

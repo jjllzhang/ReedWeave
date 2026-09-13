@@ -9,19 +9,19 @@ const PP: &[&str] = &[
     "--extension-degree",
     "1,2,3,5",
     "--log-d",
-    "1",
+    "2",
     "--m",
     "1",
     "--blowup",
     "2",
     "--terminal-coefficients",
-    "1",
+    "2",
     "--num-queries",
     "1",
 ];
 const HEADER: &str = "base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB";
 fn bench(out: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_reedweave-bench"))
+    Command::new(env!("CARGO_BIN_EXE_reedweave-ub-bench"))
         .args(args)
         .arg("--out")
         .arg(out)
@@ -75,7 +75,7 @@ fn tiny_all_profiles_verified_and_isolated() {
         );
     }
     assert_eq!(std::fs::read_to_string(historical).unwrap(), "historical\n");
-    let path = directory.path().join("ReedWeave/goldilocks.csv");
+    let path = directory.path().join("ReedWeave_UB/goldilocks.csv");
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(text.lines().next().unwrap(), HEADER);
     assert_eq!(text.lines().count(), 17);
@@ -85,7 +85,7 @@ fn tiny_all_profiles_verified_and_isolated() {
         let threads = if index % 4 < 2 { "1" } else { "32" };
         assert_eq!(
             &columns[..8],
-            ["goldilocks", degree, "1", "1", "2", "1", "1", threads]
+            ["goldilocks", degree, "2", "1", "2", "2", "1", threads]
         );
         assert_eq!(columns.len(), 12);
         assert!(
@@ -131,7 +131,7 @@ fn config_overlay_propagates_every_parameter_to_worker() {
         ],
     );
     success(&output);
-    let text = std::fs::read_to_string(directory.path().join("ReedWeave/goldilocks.csv")).unwrap();
+    let text = std::fs::read_to_string(directory.path().join("ReedWeave_UB/goldilocks.csv")).unwrap();
     assert_eq!(text.lines().count(), 2);
     assert!(
         text.lines()
@@ -152,6 +152,13 @@ fn missing_pp_old_switches_and_resources_fail_without_output() {
     ] {
         assert!(!bench(directory.path(), &args).status.success());
     }
+    let mut args = vec!["preflight"];
+    args.extend_from_slice(PP);
+    let terminal = args.iter().position(|&arg| arg == "--terminal-coefficients").unwrap();
+    args[terminal + 1] = "1";
+    let output = bench(directory.path(), &args);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid protocol geometry"));
     let mut args = vec!["sweep"];
     args.extend_from_slice(PP);
     args.extend_from_slice(&["--max-memory-mib", "1"]);

@@ -1,5 +1,5 @@
-//! Postcard proofs: one version byte and a 32-byte trusted-context digest,
-//! followed by bounded protocol messages. Both framing fields count toward proof size.
+//! Postcard proofs: a 32-byte trusted-context digest followed by bounded protocol
+//! messages. Protocol separation comes from the context, not a version number.
 use std::{fmt, marker::PhantomData};
 
 use reedweave_primitives::{
@@ -17,7 +17,7 @@ use serde::{
 use thiserror::Error;
 
 use crate::{
-    BrakeParams, BrakeProof, Commitment, PcsError, ReedWeave, Round, ScalarOpening,
+    UbParams, UbProof, Commitment, PcsError, ReedWeaveUb, Round, ScalarOpening,
     pcs::{boundary_bound, opening_bounds, validate_proof_shape},
 };
 
@@ -57,19 +57,19 @@ pub fn decode_commitment(bytes: &[u8]) -> Result<Commitment, DecodeError> {
     })
 }
 
-/// Encode the same typed proof accepted by `ReedWeave::verify`, including proof framing
+/// Encode the same typed proof accepted by `ReedWeaveUb::verify`, including proof framing
 /// and the trusted-context identifier, but not the public statement or parameter values.
 /// Shape validation here does not establish cryptographic validity.
 pub fn encode_eval_proof<P: FieldProfile>(
-    params: &BrakeParams,
-    proof: &BrakeProof<P>,
+    params: &UbParams,
+    proof: &UbProof<P>,
 ) -> Result<Vec<u8>, EncodeError> {
     validate_proof_shape(params, proof)?;
     let wire = WireProof {
-        version: 3,
         context_id: proof.context_id,
         block_values: Fields(&proof.block_values),
         rounds: proof.rounds.iter().map(WireRound::from).collect(),
+        oracle_roots: &proof.oracle_roots,
         terminal_coefficients: Fields(&proof.terminal_coefficients),
         initial_opening: WireInitial {
             rows: Rows(&proof.initial_opening.rows),
@@ -91,9 +91,9 @@ pub fn encode_eval_proof<P: FieldProfile>(
 /// before reserving memory or visiting elements. Exact transcript-derived counts and
 /// frontier consumption are still checked by typed verification.
 pub fn decode_eval_proof<P: FieldProfile>(
-    params: &BrakeParams,
+    params: &UbParams,
     bytes: &[u8],
-) -> Result<BrakeProof<P>, DecodeError> {
+) -> Result<UbProof<P>, DecodeError> {
     if params.profile() != P::PROFILE {
         return Err(PcsError::ProfileMismatch.into());
     }
@@ -123,7 +123,7 @@ pub enum VerifyEncodedError {
     SizeOverflow,
 }
 
-impl<P: FieldProfile> ReedWeave<P> {
+impl<P: FieldProfile> ReedWeaveUb<P> {
     /// Decode and verify the two actual transport buffers, returning their checked
     /// total byte length only after success. This is the end-to-end byte API;
     /// core-v1 benchmarks decode first and time the complete typed verifier.
@@ -225,10 +225,10 @@ impl<F: CanonicalField> Serialize for Rows<'_, F> {
 #[derive(Serialize)]
 #[serde(bound(serialize = "F: CanonicalField, K: CanonicalField"))]
 struct WireProof<'a, F, K> {
-    version: u8,
     context_id: Digest,
     block_values: Fields<'a, F>,
     rounds: Vec<WireRound<K>>,
+    oracle_roots: &'a [Digest],
     terminal_coefficients: Fields<'a, K>,
     initial_opening: WireInitial<'a, F>,
     scalar_openings: Vec<WireScalar<'a, K>>,
@@ -238,14 +238,12 @@ struct WireProof<'a, F, K> {
 struct WireRound<K> {
     even_value: Coordinate<K>,
     odd_value: Coordinate<K>,
-    next_oracle_root: Digest,
 }
 impl<K: Copy> From<&Round<K>> for WireRound<K> {
     fn from(round: &Round<K>) -> Self {
         Self {
             even_value: Coordinate(round.even_value),
             odd_value: Coordinate(round.odd_value),
-            next_oracle_root: round.next_oracle_root,
         }
     }
 }
@@ -383,24 +381,20 @@ where
     }
 }
 
-struct ProofSeed<'a, P>(&'a BrakeParams, PhantomData<P>);
+struct ProofSeed<'a, P>(&'a UbParams, PhantomData<P>);
 impl<'de, P: FieldProfile> DeserializeSeed<'de> for ProofSeed<'_, P> {
-    type Value = BrakeProof<P>;
+    type Value = UbProof<P>;
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         d.deserialize_tuple(7, self)
     }
 }
 impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
-    type Value = BrakeProof<P>;
+    type Value = UbProof<P>;
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("ReedWeave evaluation proof")
+        f.write_str("ReedWeave_UB evaluation proof")
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let params = self.0;
-        let version: u8 = next(&mut seq)?;
-        if version != 3 {
-            return Err(A::Error::custom("unsupported proof version"));
-        }
         let context_id: Digest = next(&mut seq)?;
         if context_id
             != params
@@ -423,9 +417,16 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
         .map(|round| Round {
             even_value: round.even_value.0,
             odd_value: round.odd_value.0,
-            next_oracle_root: round.next_oracle_root,
         })
         .collect();
+        let oracle_roots = seeded(
+            &mut seq,
+            Sequence {
+                min: params.rounds() - 1,
+                max: params.rounds() - 1,
+                element: |_| ValueSeed::<Digest>(PhantomData),
+            },
+        )?;
         let terminal_coefficients = seeded(
             &mut seq,
             fields::<P::Challenge>(
@@ -465,10 +466,11 @@ impl<'de, P: FieldProfile> Visitor<'de> for ProofSeed<'_, P> {
         .into_iter()
         .map(|(values, proof)| ScalarOpening { values, proof })
         .collect();
-        Ok(BrakeProof {
+        Ok(UbProof {
             context_id,
             block_values,
             rounds,
+            oracle_roots,
             terminal_coefficients,
             initial_opening: MatrixOpening { rows, proof },
             scalar_openings,

@@ -11,10 +11,10 @@ use reedweave_primitives::{
 // Its unbounded Deserialize is only a test interoperability reference.
 #[derive(Debug, Serialize, Deserialize)]
 struct ReferenceProof<B, K> {
-    version: u8,
     context_id: Digest,
     blocks: Vec<B>,
-    rounds: Vec<(K, K, [u8; 32])>,
+    rounds: Vec<(K, K)>,
+    oracle_roots: Vec<[u8; 32]>,
     terminal: Vec<K>,
     initial: (Vec<Vec<B>>, Vec<[u8; 32]>),
     scalars: Vec<(Vec<K>, Vec<[u8; 32]>)>,
@@ -27,7 +27,7 @@ fn varint_size(n: usize) -> usize {
 }
 
 // Structural formula plus every real vector header, independent of the encoder.
-fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
+fn structural_size<P: FieldProfile>(proof: &UbProof<P>) -> usize {
     let ell = proof.rounds.len();
     let u0 = proof.initial_opening.rows.len();
     let h0 = proof.initial_opening.proof.sibling_hashes.len();
@@ -39,12 +39,13 @@ fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
             .map(|o| o.proof.sibling_hashes.len())
             .sum::<usize>();
     let m = proof.block_values.len();
-    let payload = 33
+    let payload = 32
         + P::Base::BYTE_WIDTH * (m + m * u0)
         + P::Challenge::BYTE_WIDTH * (2 * ell + proof.terminal_coefficients.len() + scalar_values)
-        + 32 * (1 + ell + nodes);
+        + 32 * (ell + nodes);
     let framing = varint_size(m)
         + varint_size(ell)
+        + varint_size(ell - 1)
         + varint_size(proof.terminal_coefficients.len())
         + varint_size(u0)
         + u0 * varint_size(m)
@@ -61,7 +62,7 @@ fn structural_size<P: FieldProfile>(proof: &BrakeProof<P>) -> usize {
 fn fixture<P: FieldProfile>(
     log_n: usize,
 ) -> (
-    ReedWeave<P>,
+    ReedWeaveUb<P>,
     ExecutionContext,
     Commitment,
     P::Base,
@@ -69,7 +70,7 @@ fn fixture<P: FieldProfile>(
 ) {
     let params = test_params::<P>(log_n);
     let execution = ExecutionContext::new(1).unwrap();
-    let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+    let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
     let coefficients = (0..params.d())
         .map(|i| P::Base::from_usize(i * 17 + 3))
         .collect();
@@ -170,6 +171,7 @@ fn actual_bytes_verify_for_every_field_and_size() {
 fn serde_interoperability_and_protocol_only_order() {
     let (pcs, execution, commitment, z, opening) = fixture::<GoldilocksProfile>(15);
     let bytes = encode_eval_proof(pcs.params(), &opening.proof).unwrap();
+    assert_eq!(&bytes[..32], &opening.proof.context_id);
     let wire: GoldWire = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
         wire.blocks,
@@ -197,8 +199,8 @@ fn serde_interoperability_and_protocol_only_order() {
                 coords[1].to_canonical_bytes()
             )
         );
-        assert_eq!(wire_round.2, round.next_oracle_root);
     }
+    assert_eq!(wire.oracle_roots, opening.proof.oracle_roots);
     assert_eq!(
         wire.initial.0.len(),
         opening.proof.initial_opening.rows.len()
@@ -288,9 +290,9 @@ impl Layout {
         self.at += count * width;
     }
 }
-fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layout {
+fn layout<P: FieldProfile>(params: &UbParams, proof: &UbProof<P>) -> Layout {
     let mut l = Layout {
-        at: 33,
+        at: 32,
         vectors: Vec::new(),
         coordinates: Vec::new(),
     };
@@ -303,8 +305,9 @@ fn layout<P: FieldProfile>(params: &BrakeParams, proof: &BrakeProof<P>) -> Layou
             2 * P::Challenge::COORDINATE_COUNT,
             P::Base::COORDINATE_BYTES,
         );
-        l.at += 32;
     }
+    l.vector(params.rounds() - 1, params.rounds() - 1, params.rounds() - 1);
+    l.at += 32 * (params.rounds() - 1);
     l.vector(
         params.terminal_coefficient_count(),
         params.terminal_coefficient_count(),
@@ -392,9 +395,9 @@ fn malformed<P: FieldProfile>() {
         Err(DecodeError::TrailingBytes)
     ));
     // Same numerical length M with a redundant final varint group.
-    let mut overlong = bytes[..33].to_vec();
+    let mut overlong = bytes[..32].to_vec();
     overlong.extend([0x84, 0x00]);
-    overlong.extend_from_slice(&bytes[34..]);
+    overlong.extend_from_slice(&bytes[33..]);
     assert!(decode_eval_proof::<P>(pcs.params(), &overlong).is_err());
     for layer in 0..pcs.params().rounds() {
         let mut extra = opening.proof.clone();
@@ -434,7 +437,7 @@ fn malformed<P: FieldProfile>() {
     );
     let mut pp = public_params::<P>(15);
     pp.extension_degree = if pp.extension_degree == 1 { 2 } else { 1 };
-    let other = BrakeParams::new(pp).unwrap();
+    let other = UbParams::new(pp).unwrap();
     assert!(encode_eval_proof(&other, &opening.proof).is_err());
     assert!(decode_eval_proof::<P>(&other, &bytes).is_err());
 }
@@ -456,7 +459,7 @@ fn length_bounds_precede_element_visits_at_largest_parameters() {
         let mut pp = public_params::<GoldilocksProfile>(15);
         pp.extension_degree = degree;
         pp.log_d = 31;
-        let params = BrakeParams::new(pp).unwrap();
+        let params = UbParams::new(pp).unwrap();
         for j in 0..params.rounds() {
             let (values, depth) = opening_bounds(&params, j).unwrap();
             for max in [
@@ -500,6 +503,6 @@ fn public_params<P: FieldProfile>(old_log: usize) -> crate::PublicParams {
         num_queries: 19,
     }
 }
-fn test_params<P: FieldProfile>(old_log: usize) -> BrakeParams {
-    BrakeParams::new(public_params::<P>(old_log)).unwrap()
+fn test_params<P: FieldProfile>(old_log: usize) -> UbParams {
+    UbParams::new(public_params::<P>(old_log)).unwrap()
 }

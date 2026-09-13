@@ -1,5 +1,5 @@
 use super::*;
-use reedweave_core::{BaseField, PublicParams};
+use reedweave_ub_core::{BaseField, PublicParams};
 
 pub(crate) fn case() -> Case {
     Case {
@@ -105,7 +105,7 @@ fn csv_exact_header_append_and_accounting() {
     let directory = tempfile::tempdir().unwrap();
     let case = case();
     let path = output::csv_path(&case, directory.path());
-    assert!(path.ends_with("ReedWeave/goldilocks.csv"));
+    assert!(path.ends_with("ReedWeave_UB/goldilocks.csv"));
     let trial = output::VerifiedTrial {
         commit_time: 0.1,
         prove_time: 0.2,
@@ -145,7 +145,7 @@ fn dynamic_estimates_and_overflow_without_large_allocations() {
     assert_eq!(estimate.coefficients, 8 << 31);
     assert_eq!(estimate.matrix, 32 << 31);
     let params = c.params().unwrap();
-    let tree_nodes: usize = (0..=params.rounds())
+    let tree_nodes: usize = (0..params.rounds())
         .map(|j| 2 * params.layer_size(j).unwrap() - 1)
         .sum();
     assert_eq!(estimate.trees, tree_nodes as u64 * 32);
@@ -173,10 +173,10 @@ fn dynamic_estimates_and_overflow_without_large_allocations() {
     // Valid tiny geometry with enormous replacement-query count: the core's
     // deduplicated proof bound fits, but the conservative resource sum overflows.
     c = case();
-    c.pp.log_d = 1;
+    c.pp.log_d = 2;
     c.pp.m = 1;
     c.pp.blowup = 2;
-    c.pp.terminal_coefficients = 1;
+    c.pp.terminal_coefficients = 2;
     c.pp.num_queries = usize::MAX / 64;
     c.params().unwrap();
     assert!(

@@ -1,6 +1,6 @@
 use p3_field::PrimeCharacteristicRing;
-use reedweave_core::codec::{decode_eval_proof, encode_eval_proof};
-use reedweave_core::{BaseField, BrakeParams, PublicParams, ReedWeave};
+use reedweave_ub_core::codec::{decode_eval_proof, encode_eval_proof};
+use reedweave_ub_core::{BaseField, UbParams, PublicParams, ReedWeaveUb};
 use reedweave_primitives::{
     fields::Goldilocks as F,
     transcript::{
@@ -32,7 +32,7 @@ fn geometry_and_integer_boundaries_without_allocating_domains() {
     for e in [1, 2, 3, 5] {
         let mut p = pp();
         p.extension_degree = e;
-        let params = BrakeParams::new(p.clone()).unwrap();
+        let params = UbParams::new(p.clone()).unwrap();
         assert_eq!(
             (
                 params.d(),
@@ -49,16 +49,16 @@ fn geometry_and_integer_boundaries_without_allocating_domains() {
             p.log_d = 31;
             p.m = 1;
             p.num_queries = 1;
-            let large = BrakeParams::new(p.clone()).unwrap();
+            let large = UbParams::new(p.clone()).unwrap();
             assert_eq!(large.domain_size() as u64, 1u64 << 32);
             p.log_d = 32;
             p.m = 2;
-            assert!(BrakeParams::new(p.clone()).is_ok());
+            assert!(UbParams::new(p.clone()).is_ok());
             p.m = 1;
-            assert!(BrakeParams::new(p).is_err());
+            assert!(UbParams::new(p).is_err());
         }
     }
-    for mutation in 0..17 {
+    for mutation in 0..19 {
         let mut p = pp();
         match mutation {
             0 => p.extension_degree = 0,
@@ -81,9 +81,11 @@ fn geometry_and_integer_boundaries_without_allocating_domains() {
                 p.m = 1usize << (usize::BITS - 2);
             }
             16 => p.blowup = 1usize << (usize::BITS - 1),
+            17 => p.terminal_coefficients = 1,
+            18 => { p.log_d = 1; p.m = 1; p.terminal_coefficients = 1; }
             _ => unreachable!(),
         }
-        assert!(BrakeParams::new(p).is_err(), "mutation {mutation}");
+        assert!(UbParams::new(p).is_err(), "mutation {mutation}");
     }
 }
 
@@ -91,8 +93,8 @@ fn strict_binding<P: FieldProfile<Base = F>>() {
     let execution = ExecutionContext::new(1).unwrap();
     let mut public = pp();
     public.extension_degree = P::PROFILE.extension_degree();
-    let params = BrakeParams::new(public.clone()).unwrap();
-    let pcs = ReedWeave::<P>::new(params.clone()).unwrap();
+    let params = UbParams::new(public.clone()).unwrap();
+    let pcs = ReedWeaveUb::<P>::new(params.clone()).unwrap();
     let (root, state) = pcs.commit(vec![], &execution).unwrap();
     let opening = pcs.prove(&state, F::ZERO, &execution).unwrap();
     // This deliberately opens every leaf: changing Q cannot be detected by dedup counts.
@@ -115,12 +117,12 @@ fn strict_binding<P: FieldProfile<Base = F>>() {
             0 => other.log_d += 1,
             1 => other.m *= 2,
             2 => other.blowup *= 2,
-            3 => other.terminal_coefficients = 1,
+            3 => other.terminal_coefficients = 4,
             4 => other.num_queries += 1,
             5 => other.extension_degree = if other.extension_degree == 1 { 2 } else { 1 },
             _ => unreachable!(),
         }
-        let other = BrakeParams::new(other).unwrap();
+        let other = UbParams::new(other).unwrap();
         assert_ne!(
             params.transcript_context().identifier().unwrap(),
             other.transcript_context().identifier().unwrap()
@@ -128,7 +130,7 @@ fn strict_binding<P: FieldProfile<Base = F>>() {
         assert!(encode_eval_proof(&other, &opening.proof).is_err());
         assert!(decode_eval_proof::<P>(&other, &bytes).is_err());
         if mutation != 5 {
-            let other_pcs = ReedWeave::<P>::new(other).unwrap();
+            let other_pcs = ReedWeaveUb::<P>::new(other).unwrap();
             assert!(other_pcs.prove(&state, F::ZERO, &execution).is_err());
             assert!(
                 other_pcs
@@ -144,14 +146,13 @@ fn strict_binding<P: FieldProfile<Base = F>>() {
                 );
             }
         } else {
-            assert!(ReedWeave::<P>::new(other).is_err());
+            assert!(ReedWeaveUb::<P>::new(other).is_err());
         }
     }
-    for version in [0, 1, 2, 4, 255] {
-        let mut bad = bytes.clone();
-        bad[0] = version;
-        assert!(decode_eval_proof::<P>(&params, &bad).is_err());
-    }
+    // Obsolete prefixed encodings cannot substitute for the context-first format.
+    let mut prefixed = vec![0];
+    prefixed.extend_from_slice(&bytes);
+    assert!(decode_eval_proof::<P>(&params, &prefixed).is_err());
     let mut bad = opening.proof.clone();
     bad.context_id[0] ^= 1;
     assert!(

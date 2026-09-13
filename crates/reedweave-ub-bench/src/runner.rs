@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use reedweave_core::{
-    BrakeParams, ReedWeave,
+use reedweave_ub_core::{
+    UbParams, ReedWeaveUb,
     codec::{decode_commitment, decode_eval_proof, encode_commitment, encode_eval_proof},
 };
 use reedweave_primitives::{
@@ -59,7 +59,7 @@ pub fn run(case: &Case, settings: &Settings) -> Result<()> {
 fn run_generic<P: FieldProfile>(
     case: &Case,
     settings: &Settings,
-    params: &BrakeParams,
+    params: &UbParams,
     estimate: &Estimate,
 ) -> Result<()> {
     let execution = ExecutionContext::new(case.threads)?;
@@ -82,7 +82,7 @@ fn run_generic<P: FieldProfile>(
         let mut coefficients = Vec::new();
         coefficients.try_reserve_exact(params.d())?;
         coefficients.extend((0..params.d()).map(|_| fixture.field::<P::Base>()));
-        let pcs = ReedWeave::<P>::new(params.clone())?;
+        let pcs = ReedWeaveUb::<P>::new(params.clone())?;
         let start = Instant::now();
         let (commitment, state) = pcs.commit(coefficients, &execution)?;
         let commit_time = start.elapsed().as_secs_f64();
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(fixture.word(), 0xe220a8397b1dcdaf);
         let execution = ExecutionContext::new(1).unwrap();
         let pcs =
-            ReedWeave::<GoldilocksQuadraticProfile>::new(crate::tests::case().params().unwrap())
+            ReedWeaveUb::<GoldilocksQuadraticProfile>::new(crate::tests::case().params().unwrap())
                 .unwrap();
         let coefficients: Vec<_> = (0..pcs.params().d())
             .map(|_| fixture.field::<Goldilocks>())

@@ -13,7 +13,7 @@ use crate::{
     crypto::{BaseMmcs, ChallengeMmcs, Challenger, mmcs},
 };
 
-/// Fixed comparison FRI geometry, independent of parameterized ReedWeave.
+/// Fixed comparison FRI geometry, independent of parameterized ReedWeave_UB.
 pub const FRI_TERMINAL_COEFFICIENTS: usize = 128;
 
 pub type Fri<F, EF> = TwoAdicFriPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>>;

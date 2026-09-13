@@ -25,7 +25,7 @@ pub(crate) type GoldilocksCubic = CubicTrinomialExtensionField<Goldilocks>;
 #[path = "runner_tests.rs"]
 mod tests;
 
-/// SplitMix64-v1 fixture stream, matching ReedWeave's coefficient fixtures.
+/// SplitMix64-v1 fixture stream, matching ReedWeave_UB's coefficient fixtures.
 /// Never used for internal Fiat-Shamir challenges.
 #[derive(Clone)]
 pub(crate) struct Fixture(pub(crate) u64);

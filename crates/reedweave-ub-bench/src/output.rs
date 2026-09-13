@@ -4,14 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use reedweave_core::BrakeParams;
+use reedweave_ub_core::UbParams;
 
 use crate::{Result, config::Case};
 
 pub const HEADER: &str = "base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB";
 
 pub fn csv_path(_case: &Case, output: &Path) -> PathBuf {
-    output.join("ReedWeave/goldilocks.csv")
+    output.join("ReedWeave_UB/goldilocks.csv")
 }
 /// The sweep owns one child at a time. Separate invocations must use separate output
 /// directories; concurrent writers to the same result series are unsupported.
@@ -60,7 +60,7 @@ pub struct VerifiedTrial {
 }
 pub fn append_trial(
     file: &mut File,
-    params: &BrakeParams,
+    params: &UbParams,
     threads: usize,
     trial: &VerifiedTrial,
 ) -> Result<()> {

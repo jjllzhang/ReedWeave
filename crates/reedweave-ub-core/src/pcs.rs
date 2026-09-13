@@ -1,5 +1,5 @@
-//! Standalone coefficient-input Section 3 PCS. Typed proofs contain protocol messages
-//! and a 32-byte trusted-context digest; proof encoding also prefixes one version byte.
+//! ReedWeave_UB: standalone coefficient-input Section 3 PCS. Typed proofs contain protocol messages
+//! and a 32-byte trusted-context digest identifying the protocol and parameters.
 use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
 use reedweave_primitives::{
@@ -11,7 +11,7 @@ use reedweave_primitives::{
 use reedweave_runtime::ExecutionContext;
 use thiserror::Error;
 
-use crate::BrakeParams;
+use crate::UbParams;
 
 #[cfg(test)]
 #[path = "pcs_tests.rs"]
@@ -26,7 +26,6 @@ pub struct Commitment {
 pub struct Round<K> {
     pub even_value: K,
     pub odd_value: K,
-    pub next_oracle_root: Digest,
 }
 
 #[derive(Clone, Debug)]
@@ -36,11 +35,13 @@ pub struct ScalarOpening<K> {
 }
 
 #[derive(Clone, Debug)]
-pub struct BrakeProof<P: FieldProfile> {
+pub struct UbProof<P: FieldProfile> {
     /// Fingerprint of the complete trusted public context.
     pub context_id: Digest,
     pub block_values: Vec<P::Base>,
     pub rounds: Vec<Round<P::Challenge>>,
+    /// Roots of pi_1 through pi_(t-1); pi_0 and pi_t are virtual.
+    pub oracle_roots: Vec<Digest>,
     /// Ascending coefficients, padded to the public terminal degree bound.
     pub terminal_coefficients: Vec<P::Challenge>,
     pub initial_opening: MatrixOpening<P::Base>,
@@ -49,15 +50,15 @@ pub struct BrakeProof<P: FieldProfile> {
 
 #[derive(Clone, Debug)]
 pub struct Opening<P: FieldProfile> {
-    /// Public claim, supplied separately to verification; not part of `BrakeProof`.
+    /// Public claim, supplied separately to verification; not part of `UbProof`.
     pub y: P::Base,
-    pub proof: BrakeProof<P>,
+    pub proof: UbProof<P>,
 }
 
 /// Immutable commitment state, reusable for arbitrary subsequent evaluation points.
 /// The MMCS owns the only retained encoding; coefficients are moved here by commit.
 pub struct ProverData<P: FieldProfile> {
-    params: BrakeParams,
+    params: UbParams,
     coefficients: Vec<P::Base>,
     initial: MatrixProverData<P::Base>,
     commitment: Commitment,
@@ -66,6 +67,15 @@ pub struct ProverData<P: FieldProfile> {
 impl<P: FieldProfile> ProverData<P> {
     pub fn commitment(&self) -> Commitment {
         self.commitment
+    }
+
+    pub fn coefficients(&self) -> &[P::Base] {
+        &self.coefficients
+    }
+
+    /// Natural-order N-by-m table: each matrix row is one oracle column.
+    pub fn encoded_word(&self) -> &RowMajorMatrix<P::Base> {
+        self.initial.matrix()
     }
 }
 
@@ -83,8 +93,12 @@ pub enum PcsError {
     Claim,
     #[error("round {0} scalar identity failed")]
     Scalar(usize),
-    #[error("terminal polynomial, oracle root, or evaluation disagree")]
+    #[error("terminal polynomial and evaluation disagree")]
     Terminal,
+    #[error("full opening word does not match the commitment root")]
+    OpeningRoot,
+    #[error("full opening exceeds the strict unique-decoding column radius")]
+    OpeningDistance,
     #[error("local fold failed at query {query}, round {round}")]
     Fold { query: usize, round: usize },
     #[error(transparent)]
@@ -96,15 +110,15 @@ pub enum PcsError {
 }
 
 /// Trusted configuration. Hashing is fixed to Blake3 and never proof-controlled.
-pub struct ReedWeave<P: FieldProfile> {
-    params: BrakeParams,
+pub struct ReedWeaveUb<P: FieldProfile> {
+    params: UbParams,
     dft: NaturalOrderDft<P::Base>,
     initial_mmcs: CanonicalMmcs<P::Base>,
     scalar_mmcs: CanonicalMmcs<P::Challenge>,
 }
 
-impl<P: FieldProfile> ReedWeave<P> {
-    pub fn new(params: BrakeParams) -> Result<Self, PcsError> {
+impl<P: FieldProfile> ReedWeaveUb<P> {
+    pub fn new(params: UbParams) -> Result<Self, PcsError> {
         if params.profile() != P::PROFILE {
             return Err(PcsError::ProfileMismatch);
         }
@@ -116,7 +130,7 @@ impl<P: FieldProfile> ReedWeave<P> {
         })
     }
 
-    pub fn params(&self) -> &BrakeParams {
+    pub fn params(&self) -> &UbParams {
         &self.params
     }
 
@@ -152,6 +166,51 @@ impl<P: FieldProfile> ReedWeave<P> {
         ))
     }
 
+    /// Check Section 3.1's complete decoded opening, not an evaluation proof.
+    /// The supplied word may differ from the encoding in at most floor((N-k)/2)
+    /// columns. Rows of this N-by-m matrix represent whole oracle columns.
+    pub fn open_base(
+        &self,
+        commitment: &Commitment,
+        coefficients: &[P::Base],
+        word: &RowMajorMatrix<P::Base>,
+        execution: &ExecutionContext,
+    ) -> Result<(), PcsError> {
+        if coefficients.len() > self.params.d() {
+            return Err(PcsError::CoefficientCount {
+                expected: self.params.d(),
+                actual: coefficients.len(),
+            });
+        }
+        if word.width != self.params.m()
+            || word.values.len() != self.params.domain_size() * self.params.m()
+        {
+            return Err(PcsError::Shape("full opening word"));
+        }
+        let (root, _) = self.initial_mmcs.commit(word.clone(), execution)?;
+        if root != commitment.root {
+            return Err(PcsError::OpeningRoot);
+        }
+        let padded = padded_coefficient_blocks(
+            coefficients,
+            self.params.m(),
+            self.params.k(),
+            self.params.domain_size(),
+        )?;
+        let expected = self.dft.dft_batch(padded, execution)?;
+        let errors = word
+            .values
+            .chunks_exact(self.params.m())
+            .zip(expected.values.chunks_exact(self.params.m()))
+            .filter(|(actual, expected)| actual != expected)
+            .count();
+        // Equivalent to 2*errors < N-k+1, without multiplication overflow.
+        if errors > (self.params.domain_size() - self.params.k()) / 2 {
+            return Err(PcsError::OpeningDistance);
+        }
+        Ok(())
+    }
+
     pub fn prove(
         &self,
         state: &ProverData<P>,
@@ -184,18 +243,19 @@ impl<P: FieldProfile> ReedWeave<P> {
             .map(|row| combine::<P>(row, &weights))
             .collect();
         let mut coefficients = coefficients;
-        let mut initial_word = Some(
+        let mut initial_word = (self.params.rounds() > 1).then(|| {
             state
                 .initial
                 .matrix()
                 .values
                 .chunks_exact(self.params.m())
                 .map(|row| combine::<P>(row, &weights))
-                .collect::<Vec<_>>(),
-        );
+                .collect::<Vec<_>>()
+        });
         let mut layers: Vec<MatrixProverData<P::Challenge>> =
-            Vec::with_capacity(self.params.rounds());
+            Vec::with_capacity(self.params.rounds() - 1);
         let mut rounds = Vec::with_capacity(self.params.rounds());
+        let mut oracle_roots = Vec::with_capacity(self.params.rounds() - 1);
         let mut point = z.exp_u64(self.params.m() as u64);
         let mut claim = combine::<P>(&blocks, &weights);
         let mut omega = P::Base::two_adic_generator(self.params.log_domain_size());
@@ -215,27 +275,27 @@ impl<P: FieldProfile> ReedWeave<P> {
             }
             let gamma = transcript.sample_challenge();
             coefficients = fold_coefficients(&coefficients, gamma);
-            let word = if j == 0 {
-                initial_word
-                    .as_deref()
-                    .ok_or(PcsError::Shape("initial word"))?
-            } else {
-                &layers[j - 1].matrix().values
-            };
-            let folded = fold_word::<P>(word, gamma, omega);
-            // Release the virtual word immediately after its only use; committed
-            // layer buffers move into trees and are borrowed on subsequent rounds.
+            if j + 1 < self.params.rounds() {
+                let word = if j == 0 {
+                    initial_word
+                        .as_deref()
+                        .ok_or(PcsError::Shape("initial word"))?
+                } else {
+                    &layers[j - 1].matrix().values
+                };
+                let folded = fold_word::<P>(word, gamma, omega);
+                let (root, layer) = self
+                    .scalar_mmcs
+                    .commit(RowMajorMatrix::new_col(folded), execution)?;
+                transcript.observe_round_root(j, &root)?;
+                oracle_roots.push(root);
+                layers.push(layer);
+            }
             initial_word = None;
-            let (root, layer) = self
-                .scalar_mmcs
-                .commit(RowMajorMatrix::new_col(folded), execution)?;
-            transcript.observe_round_root(j, &root)?;
             rounds.push(Round {
                 even_value,
                 odd_value,
-                next_oracle_root: root,
             });
-            layers.push(layer);
             claim = even_value + gamma * odd_value;
             point = square;
             omega = omega.square();
@@ -276,10 +336,11 @@ impl<P: FieldProfile> ReedWeave<P> {
         }
         Ok(Opening {
             y,
-            proof: BrakeProof {
+            proof: UbProof {
                 context_id: self.params.transcript_context().identifier()?,
                 block_values: blocks,
                 rounds,
+                oracle_roots,
                 terminal_coefficients,
                 initial_opening,
                 scalar_openings,
@@ -294,7 +355,7 @@ impl<P: FieldProfile> ReedWeave<P> {
         commitment: &Commitment,
         z: P::Base,
         y: P::Base,
-        proof: &BrakeProof<P>,
+        proof: &UbProof<P>,
         execution: &ExecutionContext,
     ) -> Result<(), PcsError> {
         self.validate_shape(proof)?;
@@ -310,7 +371,9 @@ impl<P: FieldProfile> ReedWeave<P> {
             }
             let gamma = transcript.sample_challenge();
             gammas.push(gamma);
-            transcript.observe_round_root(j, &round.next_oracle_root)?;
+            if j + 1 < self.params.rounds() {
+                transcript.observe_round_root(j, &proof.oracle_roots[j])?;
+            }
             claim = round.even_value + gamma * round.odd_value;
             point = point.square();
         }
@@ -319,17 +382,6 @@ impl<P: FieldProfile> ReedWeave<P> {
             P::Challenge::from(point),
         ) != claim
         {
-            return Err(PcsError::Terminal);
-        }
-        // Reconstruct the full terminal oracle over the same base-field subgroup.
-        let mut padded = proof.terminal_coefficients.clone();
-        padded.resize(self.params.terminal_domain_size(), P::Challenge::ZERO);
-        let terminal_word = self
-            .dft
-            .dft_extension_batch(RowMajorMatrix::new_col(padded), execution)?;
-        let (terminal_root, terminal_data) = self.scalar_mmcs.commit(terminal_word, execution)?;
-        let terminal_values = &terminal_data.matrix().values;
-        if terminal_root != proof.rounds[self.params.rounds() - 1].next_oracle_root {
             return Err(PcsError::Terminal);
         }
         transcript.observe_terminal(&proof.terminal_coefficients)?;
@@ -368,7 +420,7 @@ impl<P: FieldProfile> ReedWeave<P> {
             // or allocating a singleton field vector per authenticated value.
             let (rows, _) = opening.values.as_chunks::<1>();
             self.scalar_mmcs.verify_multi_batch(
-                &proof.rounds[tree - 1].next_oracle_root,
+                &proof.oracle_roots[tree - 1],
                 Dimensions {
                     width: 1,
                     height: self.params.domain_size() >> tree,
@@ -393,7 +445,9 @@ impl<P: FieldProfile> ReedWeave<P> {
             )
             .collect();
         let inverse_two = P::Base::TWO.inverse();
-        let inverse_omega = P::Base::two_adic_generator(self.params.log_domain_size()).inverse();
+        let omega = P::Base::two_adic_generator(self.params.log_domain_size());
+        let inverse_omega = omega.inverse();
+        let terminal_omega = omega.exp_power_of_2(self.params.rounds());
         for (query, &start) in starts.iter().enumerate() {
             // This is the inverse of the actual signed point, even in the upper half.
             let mut inverse_point = inverse_omega.exp_u64(start as u64);
@@ -412,7 +466,10 @@ impl<P: FieldProfile> ReedWeave<P> {
                     + gammas[j] * (positive - negative) * (inverse_two * inverse_point);
                 let child = t % (height / 2);
                 let expected = if j + 1 == self.params.rounds() {
-                    terminal_values[child]
+                    horner(
+                        proof.terminal_coefficients.iter().copied(),
+                        P::Challenge::from(terminal_omega.exp_u64(child as u64)),
+                    )
                 } else {
                     let position = sets[j + 1]
                         .binary_search(&child)
@@ -446,13 +503,13 @@ impl<P: FieldProfile> ReedWeave<P> {
     }
 
     /// Public-geometry bounds for typed callers, independently of future byte decoding.
-    pub fn validate_shape(&self, proof: &BrakeProof<P>) -> Result<(), PcsError> {
+    pub fn validate_shape(&self, proof: &UbProof<P>) -> Result<(), PcsError> {
         validate_proof_shape(&self.params, proof)
     }
 }
 
 /// Bounds shared by typed verification and the parameter-aware byte parser.
-pub(crate) fn opening_bounds(params: &BrakeParams, j: usize) -> Result<(usize, usize), PcsError> {
+pub(crate) fn opening_bounds(params: &UbParams, j: usize) -> Result<(usize, usize), PcsError> {
     let height = params.layer_size(j).ok_or(PcsError::Shape("layer"))?;
     let depth = params
         .log_domain_size()
@@ -473,8 +530,8 @@ pub(crate) fn boundary_bound(count: usize, depth: usize) -> Result<usize, PcsErr
 }
 
 pub(crate) fn validate_proof_shape<P: FieldProfile>(
-    params: &BrakeParams,
-    proof: &BrakeProof<P>,
+    params: &UbParams,
+    proof: &UbProof<P>,
 ) -> Result<(), PcsError> {
     if params.profile() != P::PROFILE {
         return Err(PcsError::ProfileMismatch);
@@ -485,6 +542,7 @@ pub(crate) fn validate_proof_shape<P: FieldProfile>(
     if proof.block_values.len() != params.m()
         || proof.terminal_coefficients.len() != params.terminal_coefficient_count()
         || proof.rounds.len() != params.rounds()
+        || proof.oracle_roots.len() != params.rounds() - 1
         || proof.scalar_openings.len() != params.rounds() - 1
     {
         return Err(PcsError::Shape("prefix or layer count"));
@@ -567,7 +625,7 @@ fn fold_word<P: FieldProfile>(
 /// The ordered experiment is preserved in `starts`; only per-tree leaf indices are deduplicated.
 /// These sets are derived locally and are never transmitted. Binary search in each sorted
 /// set is the index-to-opening lookup, bounded by at most 2 * Q entries.
-fn query_sets(params: &BrakeParams, starts: &[usize]) -> Vec<Vec<usize>> {
+fn query_sets(params: &UbParams, starts: &[usize]) -> Vec<Vec<usize>> {
     (0..params.rounds())
         .map(|j| {
             let height = params.domain_size() >> j;

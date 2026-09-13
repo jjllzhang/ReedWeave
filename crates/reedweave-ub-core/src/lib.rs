@@ -1,8 +1,9 @@
-//! Standalone coefficient-input ReedWeave. Geometry validation is not a security estimate.
+//! ReedWeave_UB: the coefficient-input unique-decoding base construction.
+//! Geometry validation is not a security estimate.
 pub mod codec;
 mod pcs;
 pub use pcs::{
-    BrakeProof, Commitment, Opening, PcsError, ProverData, ReedWeave, Round, ScalarOpening,
+    UbProof, Commitment, Opening, PcsError, ProverData, ReedWeaveUb, Round, ScalarOpening,
 };
 pub use reedweave_primitives::profile::{BaseField, Profile};
 use reedweave_primitives::transcript::TranscriptContext;
@@ -21,7 +22,7 @@ pub struct PublicParams {
 
 /// Immutable, checked public geometry; no soundness checking is performed.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BrakeParams {
+pub struct UbParams {
     pp: PublicParams,
     d: usize,
     domain_size: usize,
@@ -39,7 +40,7 @@ pub enum ParameterError {
     SizeOverflow,
 }
 
-impl BrakeParams {
+impl UbParams {
     pub fn new(pp: PublicParams) -> Result<Self, ParameterError> {
         use ParameterError::*;
         if !matches!(pp.extension_degree, 1 | 2 | 3 | 5) {
@@ -51,10 +52,11 @@ impl BrakeParams {
             return Err(Geometry);
         }
         let k = d / pp.m;
-        if k < 2
+        if k < 4
             || !k.is_power_of_two()
             || pp.blowup < 2
             || !pp.blowup.is_power_of_two()
+            || pp.terminal_coefficients < 2
             || !pp.terminal_coefficients.is_power_of_two()
             || pp.terminal_coefficients > k / 2
         {
@@ -89,7 +91,8 @@ impl BrakeParams {
         // Conservative bounds include vector framing/headers, not only field payloads.
         let initial_bytes = mul(openings, row_bytes)?;
         let prefix_bytes = mul(pp.m, 8)?
-            .checked_add(mul(rounds, 2 * width + 32)?)
+            .checked_add(mul(rounds, 2 * width)?)
+            .and_then(|v| v.checked_add(mul(rounds - 1, 32).ok()?))
             .and_then(|v| v.checked_add(mul(pp.terminal_coefficients, width).ok()?))
             .ok_or(SizeOverflow)?;
         let framing_bytes = mul(openings, 10)?

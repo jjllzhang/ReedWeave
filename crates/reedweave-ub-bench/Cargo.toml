@@ -1,12 +1,12 @@
 [package]
-name = "reedweave-bench"
+name = "reedweave-ub-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-reedweave-core = { path = "../reedweave-core" }
+reedweave-ub-core = { path = "../reedweave-ub-core" }
 reedweave-primitives.workspace = true
 reedweave-runtime.workspace = true
 serde.workspace = true

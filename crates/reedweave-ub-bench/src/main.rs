@@ -20,7 +20,7 @@ fn main() -> ExitCode {
     match execute(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("reedweave-bench: {error}");
+            eprintln!("reedweave-ub-bench: {error}");
             ExitCode::FAILURE
         }
     }

@@ -74,7 +74,7 @@ fn replay<P: FieldProfile>() {
     // Independently assemble the context, rather than call production canonical_bytes.
     let mut bytes = Vec::new();
     for string in [
-        b"ReedWeave-Section3-Multiproof".as_slice(),
+        b"ReedWeave_UB-Section3-Multiproof".as_slice(),
         b"goldilocks",
         P::PROFILE.representation(),
     ] {
@@ -137,16 +137,18 @@ fn replay<P: FieldProfile>() {
             transcript.sample_challenge(),
             P::sample_challenge(&mut reference)
         );
-        transcript.observe_round_root(j, &[7; 32]).unwrap();
-        event(
-            &mut reference,
-            6,
-            (j as u64)
-                .to_le_bytes()
-                .into_iter()
-                .chain([7; 32])
-                .collect(),
-        );
+        if j < 1 {
+            transcript.observe_round_root(j, &[7; 32]).unwrap();
+            event(
+                &mut reference,
+                6,
+                (j as u64)
+                    .to_le_bytes()
+                    .into_iter()
+                    .chain([7; 32])
+                    .collect(),
+            );
+        }
     }
     let terminal = vec![P::Challenge::TWO; 2];
     transcript.observe_terminal(&terminal).unwrap();
@@ -164,7 +166,16 @@ fn replay<P: FieldProfile>() {
     assert_eq!(transcript.sample_queries(), expected);
     assert!(transcript.observe_block_values(&[]).is_err());
     assert!(transcript.observe_terminal(&[]).is_err());
+    assert!(transcript.observe_round_root(1, &[0; 32]).is_err());
     assert!(transcript.observe_round_root(2, &[0; 32]).is_err());
+    let mut invalid = pp.clone();
+    invalid.terminal_coefficients = 1;
+    assert!(Transcript::<P>::new(invalid).is_err());
+    let mut invalid = pp.clone();
+    invalid.log_d = 1;
+    invalid.m = 1;
+    invalid.terminal_coefficients = 1;
+    assert!(Transcript::<P>::new(invalid).is_err());
     assert!(
         transcript
             .observe_round(2, P::Challenge::ZERO, P::Challenge::ZERO)
@@ -176,7 +187,7 @@ fn replay<P: FieldProfile>() {
             0 => other.log_d += 1,
             1 => other.m *= 2,
             2 => other.blowup *= 2,
-            3 => other.terminal_coefficients = 1,
+            3 => other.terminal_coefficients = 4,
             4 => other.num_queries += 1,
             5 => other.extension_degree = if other.extension_degree == 1 { 2 } else { 1 },
             _ => unreachable!(),

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use reedweave_core::{BrakeParams, PublicParams};
+use reedweave_ub_core::{UbParams, PublicParams};
 use serde::Deserialize;
 
 use crate::Result;
@@ -9,7 +9,7 @@ use crate::Result;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Measured ReedWeave trials (timing_model=core-v1): geometry validation only; security not evaluated"
+    about = "Measured ReedWeave_UB trials (timing_model=core-v1): geometry validation only; security not evaluated"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -50,7 +50,7 @@ pub struct Common {
     pub config: Option<PathBuf>,
     #[command(flatten)]
     pub pp: PpArgs,
-    /// Output root; appends only to ReedWeave/goldilocks.csv.
+    /// Output root; appends only to ReedWeave_UB/goldilocks.csv.
     #[arg(long)]
     pub out: Option<PathBuf>,
     #[arg(long)]
@@ -134,11 +134,11 @@ pub struct Case {
     pub threads: usize,
 }
 impl Case {
-    pub fn params(&self) -> Result<BrakeParams> {
+    pub fn params(&self) -> Result<UbParams> {
         if !matches!(self.threads, 1 | 32) {
             return Err("bench threads must be 1 or 32".into());
         }
-        Ok(BrakeParams::new(self.pp.clone())?)
+        Ok(UbParams::new(self.pp.clone())?)
     }
     pub fn label(&self) -> String {
         let p = &self.pp;
