@@ -1,0 +1,133 @@
+# ReedWeave_JB: one commitment plus one Eval, 100-bit interactive IOP budget.
+# Merkle/Fiat-Shamir, hash security, repeated openings and runtime resources NOT certified.
+# No measurements were run to generate these cases; run Rust preflight before benchmarking.
+# Finite, modest search (NOT a global optimum): log_d=20..28; m={32,64}; blowup={2};
+# terminal_coefficients={256} (<=256); fixed agreement={177/250}=0.708; e={2,3}.
+# The command below rechecks the selected shortlist, not the earlier broader parameter sweep.
+# Objective: min_expected_bytes, independently per log_d, exact antipodal-pair expectation.
+# Sizes include one R/zeta/c commitment; no context/framing, z/y or query indices.
+# Detailed candidate errors/certificates are generated on demand, not stored in the repository.
+# Recompute the selection and print its JSON report to stdout (no benchmark or file writes):
+# PYTHONDONTWRITEBYTECODE=1 python3 scripts/reedweave_jb_queries.py --search \
+#   --search-log-d 20,21,22,23,24,25,26,27,28 --search-m 32,64 --search-blowups 2 \
+#   --search-terminal-coefficients 256 --search-agreements 177/250 \
+#   --search-degrees 2,3 --objective min_expected_bytes --security-bits 100 --json
+# Explicit load only; [pp] is run's first case, [[cases]] are the full sweep.
+# Do not override individual pp axes when using these selected sweep cases.
+[pp]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 20
+m = 32
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+# Execution settings do not enter pp or the IOP certificate.
+[benchmark]
+threads = [1, 32]
+repetitions = 5
+# Always override this with a fresh output root for a real campaign.
+output_dir = "results"
+seed = 20260906
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 20
+m = 32
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 21
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 22
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 23
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 24
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 25
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 26
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 27
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 28
+m = 64
+blowup = 2
+terminal_coefficients = 256
+agreement_numerator = 177
+agreement_denominator = 250
+num_queries = 201
