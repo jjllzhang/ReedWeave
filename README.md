@@ -1,34 +1,56 @@
 # ReedWeave
 
-Crate names, CLI commands, and protocol identifiers consistently use the ReedWeave name.
+**ReedWeave_UB** is the unique-decoding base construction in Section 3 of the paper.
+**ReedWeave_JB** is reserved for the future Johnson-radius construction in Section 4;
+it is not implemented yet. Shared primitives and runtime keep the ReedWeave family name.
 
-Rust coefficient-input ReedWeave PCS over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. See [ReedWeave.md](ReedWeave.md) for the protocol and soundness derivation; [WHIR.md](WHIR.md) is the reference paper, not the WHIR benchmark manual.
+Naming: Rust `ReedWeaveUb`, `UbParams`, `UbProof`; crates/CLI `reedweave-ub-core`
+and `reedweave-ub-bench`; plotting selector `reedweave_ub`; results directory `ReedWeave_UB`.
+The old unqualified implementation names are no longer supported.
+
+Rust coefficient-input ReedWeave_UB PCS over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. See [ReedWeave.md](ReedWeave.md) for the protocol and soundness derivation.
 
 ## Parameters and security
 
-Every ReedWeave invocation requires complete public parameters, via CLI flags or an explicitly loaded TOML file:
+Every ReedWeave_UB invocation requires complete public parameters, via CLI flags or an explicitly loaded TOML file:
 
 `(base_field, extension_degree, log_d, m, blowup, terminal_coefficients, num_queries)`.
 
-The input contains at most `d = 2^log_d` ascending monomial coefficients and is padded internally. Derived geometry is `k=d/m`, `N=blowup*k`, and `t=log2(k/terminal_coefficients)`. At least one binary fold is required. The base FFT domain is limited to `2^32`, independently of extension degree. F128 is not supported.
+The input contains at most `d = 2^log_d` ascending monomial coefficients and is padded internally. Derived geometry is `k=d/m`, `N=blowup*k`, and `t=log2(k/terminal_coefficients)`. Require `k>=4` and a power-of-two `2<=terminal_coefficients<=k/2`, so `1<=t<log2(k)`. The base FFT domain is limited to `2^32`, independently of extension degree. F128 is not supported.
 
-**The Rust API validates geometry, not security.** The independent [Python calculator](scripts/reedweave_queries.py) checks the unique-decoding IOP bound; it does not certify Fiat–Shamir/hash security or knowledge soundness and does not automatically change benchmark parameters.
+**The Rust API validates geometry, not security.** The independent [Python calculator](scripts/reedweave_ub_queries.py) checks the unique-decoding IOP bound; it does not certify Fiat–Shamir/hash security or knowledge soundness and does not automatically change benchmark parameters.
+
+## Protocol and API
+
+`ReedWeaveUb::commit` retains reusable prover data; `prove`/`verify` implement evaluation
+proofs. `open_base(commitment, coefficients, word, execution)` checks a full decoded
+opening: root equality and **joint column distance** `2*errors < N-k+1`, not exact-codeword
+equality. `ProverData::coefficients()` and `encoded_word()` expose borrowed full-opening
+inputs. The natural-order word is an `N`-by-`m` matrix; each stored row is one oracle column.
+
+Proofs carry `t` evaluation-message pairs and only `t-1` intermediate oracle roots.
+There is no terminal root or terminal tree: verification evaluates the terminal
+polynomial directly at query points. The transcript label is
+`ReedWeave_UB-Section3-Multiproof`. The encoding starts with the complete context digest,
+with no version byte; obsolete encodings are rejected. UB and future JB must use
+separate transcript domains.
 
 ## Build and test
 
 Use Rust 1.95+, Python 3.11+, and Matplotlib 3.10+ for plotting. Plonky3 revisions are pinned in `Cargo.toml` and `Cargo.lock`; no local upstream checkout is needed.
 
 ```sh
-cargo build --release -p reedweave-bench -p plonky3-pcs-bench --locked
+cargo build --release -p reedweave-ub-bench -p plonky3-pcs-bench --locked
 cargo test --workspace --locked
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 ```
 
-For coverage, targeted commands, and optional formatting/lint checks, see [TESTING.md](TESTING.md). Tests use small fixtures and disposable outputs, not production benchmark sweeps.
+Targeted checks: `cargo test -p reedweave-ub-core -p reedweave-primitives -p reedweave-ub-bench --locked`.
+Tests use small fixtures and disposable outputs, not production benchmark sweeps.
 
-## ReedWeave benchmark
+## ReedWeave_UB benchmark
 
-[configs/reedweave.toml](configs/reedweave.toml) contains nine tuned cases for `log_d=20..28`, Goldilocks, `blowup=2`, `terminal_coefficients=256`, and a 100-bit IOP target. Parameters minimize expected protocol communication with multiproof sharing under that terminal-size constraint. They do not necessarily minimize runtime.
+[configs/reedweave_ub.toml](configs/reedweave_ub.toml) contains nine tuned cases for `log_d=20..28`, Goldilocks, `blowup=2`, `terminal_coefficients=256`, and a 100-bit IOP target. Parameters minimize expected protocol communication with multiproof sharing under that terminal-size constraint. They do not necessarily minimize runtime.
 
 | log_d | extension_degree | m | num_queries |
 |---:|---:|---:|---:|
@@ -39,14 +61,14 @@ For coverage, targeted commands, and optional formatting/lint checks, see [TESTI
 
 ```sh
 # Geometry and resource admission only; no proof allocation or CSV writes.
-target/release/reedweave-bench preflight --config configs/reedweave.toml --threads 32
+target/release/reedweave-ub-bench preflight --config configs/reedweave_ub.toml --threads 32
 
 # Production run: nine cases, one discarded warmup + five trials per case.
 # Use a fresh output root to avoid appending to an existing campaign.
-target/release/reedweave-bench sweep --config configs/reedweave.toml --threads 32 --out results-new
+target/release/reedweave-ub-bench sweep --config configs/reedweave_ub.toml --threads 32 --out results-new
 
 # One case: run reads [pp], not [[cases]].
-target/release/reedweave-bench run --config configs/reedweave.toml --threads 32 --out results-one
+target/release/reedweave-ub-bench run --config configs/reedweave_ub.toml --threads 32 --out results-one
 ```
 
 No config is loaded implicitly. `sweep` and `preflight` use the complete `[[cases]]`; `run` uses `[pp]` (the `log_d=20` case). CLI public-parameter flags override every selected case, so do not override them when reproducing the tuned campaign. The config retains thread choices `[1,32]`; `--threads 32` selects only the measurements currently stored in the repository. Use `--help` for lists/ranges and runtime options.
@@ -59,10 +81,10 @@ Preflight estimates memory, including retained state, temporary buffers, 25% ove
 
 ```sh
 # Reads only [pp]; ignores num_queries and [[cases]].
-python3 scripts/reedweave_queries.py --config configs/reedweave.toml --security-bits 100 --json
+python3 scripts/reedweave_ub_queries.py --config configs/reedweave_ub.toml --security-bits 100 --json
 
 # Omitted extension degree: minimize feasible e first, then Q.
-python3 scripts/reedweave_queries.py --base-field goldilocks --log-d 20 \
+python3 scripts/reedweave_ub_queries.py --base-field goldilocks --log-d 20 \
   --m 64 --blowup 2 --terminal-coefficients 128 --security-bits 100
 ```
 
@@ -81,7 +103,7 @@ The calculator's size model uses **independent paths, without multiproof or leaf
 ```text
 B = m*(1+2*Q)
 E = 2*t+k_t+2*Q*(t-1)
-H = 1+t+2*Q*(t*n-t*(t-1)/2)
+H = t+2*Q*(t*n-t*(t-1)/2)
 bytes = 8*B + 8*e*E + 32*H
 ```
 
@@ -89,32 +111,39 @@ This counts prover-to-verifier communication, including the initial commitment o
 
 ## Timing and result files
 
-Current ReedWeave, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
+Current ReedWeave_UB, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
 
 - **Commit:** encoding/FFT, Merkle construction and native commitment work; stops before serialization.
 - **Open:** complete typed proof generation, including transcript, folds and multiproofs; stops before serialization.
 - **Verify:** full typed verification of the wire-round-trip decoded proof.
 
-Serialization, decoding, canonical encoding checks and transport consistency checks still run, outside timers. Fixture generation, pool/process setup and CSV writes are also outside timers. RS encoding and lazy DFT work remain timed. ReedWeave's `verify_encoded` API retains end-to-end checks.
+Serialization, decoding, canonical encoding checks and transport consistency checks still run, outside timers. Fixture generation, pool/process setup and CSV writes are also outside timers. RS encoding and lazy DFT work remain timed. ReedWeave_UB's `verify_encoded` API retains end-to-end checks.
 
-`proof_size_KiB` is the actual serialized commitment-plus-proof length, not the independent-path estimate. ReedWeave includes its initial 32-byte root once, plus the evaluation proof including version/context framing. Times are milliseconds; KiB is bytes/1024. Each verified trial is a separate row, rounded to three decimals.
+`proof_size_KiB` is the actual serialized commitment-plus-proof length, not the independent-path estimate. ReedWeave_UB includes its initial 32-byte root once, plus the evaluation proof including context framing. Times are milliseconds; KiB is bytes/1024. Each verified trial is a separate row, rounded to three decimals.
 
 **Runner output and curated plotting input use the same relative layout; use a fresh output root for new campaigns:**
 
 | Purpose | Path |
 |---|---|
-| ReedWeave runner output | `<out>/ReedWeave/goldilocks.csv` |
-| Curated ReedWeave plotting input | `results/ReedWeave/goldilocks.csv` |
+| ReedWeave_UB runner output | `<out>/ReedWeave_UB/goldilocks.csv` |
+| Curated ReedWeave_UB plotting input | `results/ReedWeave_UB/goldilocks.csv` |
 | Other protocol CSVs | `<out>/<protocol>/goldilocks.csv` |
 | Comparison figure | `results/figures/goldilocks/threads_32.png` |
 
-The curated ReedWeave file contains the latest 45 measured rows: nine configured sizes, five trials each, 32 threads, terminal size 256, core-v1 timing. It records complete public parameters without a `protocol_version` column:
+`results/ReedWeave_UB/goldilocks.csv` contains a fresh run of the corrected implementation,
+without the redundant terminal tree. All 45 measured trials and nine discarded warmups
+passed verification. The comparison PNG has been regenerated using these results;
+other protocols' CSVs were retained unchanged. Build/source fingerprints, run settings,
+and verification logs are recorded in [benchmark.log](results/ReedWeave_UB/benchmark.log).
+
+The file covers nine sizes, five trials each, 32 threads, terminal size 256,
+and core-v1 timing. It records complete public parameters without a `protocol_version` column:
 
 ```csv
 base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB
 ```
 
-Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. Other protocols' existing measurements were not re-run with the latest ReedWeave campaign, so their timing compatibility is not established by the figure.
+Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. Other protocols' existing measurements were not re-run with the latest ReedWeave_UB campaign, so their timing compatibility is not established by the figure.
 
 ## Comparison protocols and plotting
 
@@ -126,16 +155,16 @@ python3 scripts/plot_results.py --threads 32 --validate-only
 python3 scripts/plot_results.py --threads 32
 ```
 
-The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. ReedWeave requires the full public-parameter schema: legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
+The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave_UB, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. ReedWeave_UB requires the full public-parameter schema: legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
 
 Default sizes are `20..28`; `--log-d`/`--log-sizes` selects others. `--protocols` restricts protocols, `--results` selects an input root, `--plonky3-results` overrides only FRI/STIR/WHIR inputs, and `--out` selects the figure root. Missing explicitly selected data or incomplete trial coverage is an error. Means use five rows per point, except Shockwave and Brakedown, which each supply a single row; `--repetitions` overrides this. Zero timings use linear axes; positive-only metrics use base-2 log axes. Input semantics, security assumptions and PoW may differ across protocols: these are native-configuration comparisons, not identical-task security benchmarks.
 
 ## Workspace layout
 
-- `reedweave-core`: public parameters, typed PCS, immutable prover state, codecs and verification.
+- `reedweave-ub-core`: public parameters, typed PCS, immutable prover state, codecs and verification.
 - `reedweave-primitives`: Goldilocks profiles, canonical hashing, DFT, MMCS and transcript.
 - `reedweave-runtime`: local execution budget and Rayon pool.
-- `reedweave-bench`: configuration, resource admission, isolated scheduling and CSV output.
+- `reedweave-ub-bench`: configuration, resource admission, isolated scheduling and CSV output.
 - `plonky3-pcs-bench`: independent FRI/STIR/WHIR benchmarks and parameter audits.
 
-ReedWeave binds complete public parameters and encoding conventions into the transcript. `ReedWeave<P>` requires validated parameters matching the chosen field profile; untrusted bytes cannot choose the profile or statement. Historical implementation plans under `docs/` are archival, not current usage instructions; that directory remains ignored by Git.
+ReedWeave_UB binds complete public parameters and encoding conventions into the transcript. `ReedWeaveUb<P>` requires validated parameters matching the chosen field profile; untrusted bytes cannot choose the profile or statement. Historical implementation plans under `docs/` are archival, not current usage instructions; that directory remains ignored by Git.
