@@ -1,4 +1,4 @@
-# ReedWeave_UB (Section 3 unique decoding), not ReedWeave_JB.
+# ReedWeave_UB (unique decoding), not ReedWeave_JB.
 # Goldilocks, blowup=2, 100-bit IOP soundness target.
 # CSV/PNG measurements use the corrected protocol; use a fresh output root for reruns.
 # Minimize expected protocol-only multiproof bytes with terminal_coefficients <= 256.

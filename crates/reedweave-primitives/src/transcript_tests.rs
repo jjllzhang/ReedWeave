@@ -74,7 +74,7 @@ fn replay<P: FieldProfile>() {
     // Independently assemble the context, rather than call production canonical_bytes.
     let mut bytes = Vec::new();
     for string in [
-        b"ReedWeave_UB-Section3-Multiproof".as_slice(),
+        b"ReedWeave_UB-Multiproof".as_slice(),
         b"goldilocks",
         P::PROFILE.representation(),
     ] {

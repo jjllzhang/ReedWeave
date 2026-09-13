@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find ReedWeave_UB's smallest Q using ReedWeave.md's unique-decoding IOP bound.
+"""Find ReedWeave_UB's smallest Q using the unique-decoding IOP bound.
 
 Python 3.11+, standard library only. Input pp excludes Q; security_bits is a
 separate required input. For TOML, read only [pp] and ignore num_queries.
@@ -58,7 +58,7 @@ class PublicParams:
         if log_k < 2:
             raise ValueError("m must divide d with k = d/m >= 4")
         if self.terminal_coefficients < 2:
-            raise ValueError("terminal_coefficients must be at least 2 (unique-decoding theorem)")
+            raise ValueError("terminal_coefficients must be at least 2 (required by the unique-decoding bound)")
         if self.terminal_coefficients.bit_length() - 1 >= log_k:
             raise ValueError("terminal_coefficients must be at most k/2 (at least one binary fold)")
         # Check exponents before constructing d or N, including for huge log_d.

@@ -1,4 +1,4 @@
-//! ReedWeave_UB: standalone coefficient-input Section 3 PCS. Typed proofs contain protocol messages
+//! ReedWeave_UB: standalone coefficient-input unique-decoding PCS. Typed proofs contain protocol messages
 //! and a 32-byte trusted-context digest identifying the protocol and parameters.
 use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
@@ -166,7 +166,7 @@ impl<P: FieldProfile> ReedWeaveUb<P> {
         ))
     }
 
-    /// Check Section 3.1's complete decoded opening, not an evaluation proof.
+    /// Check the complete decoded opening, not an evaluation proof.
     /// The supplied word may differ from the encoding in at most floor((N-k)/2)
     /// columns. Rows of this N-by-m matrix represent whole oracle columns.
     pub fn open_base(
@@ -349,7 +349,7 @@ impl<P: FieldProfile> ReedWeaveUb<P> {
     }
 
     /// Verify an intended public statement using only authenticated queried rows.
-    /// This does not require an exact codeword: it preserves the paper's decoded-opening relation.
+    /// This does not require an exact codeword: it checks the decoded-opening relation.
     pub fn verify(
         &self,
         commitment: &Commitment,
