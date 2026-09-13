@@ -4,10 +4,10 @@
 Paths do not distinguish timing models: use logs to identify measurement provenance.
 Do not mix historical times with new core algorithm times.
 Read each protocol from <root>/<protocol>/goldilocks.csv.
-ReedWeave_UB requires the full public-parameter schema; legacy compact headers are rejected.
+ReedWeave_UB and ReedWeave_JB require full public-parameter schemas; legacy compact headers are rejected.
 The CSV has no protocol-version column; campaign provenance is external metadata.
 Use --log-d 1..3 (alias --log-sizes) to select other sizes, including tiny cases.
-ReedWeave_UB pp may vary with log_d, but must be fixed within each size across trials
+ReedWeave UB/JB pp may vary with log_d, but must be fixed within each size across trials
 and thread counts; ambiguous campaigns are rejected.
 Plot arithmetic means of measured trials.
 CSV times are already in ms and proof sizes in KiB; no unit conversion is applied.
@@ -41,6 +41,7 @@ from statistics import mean
 FIELDS = {"goldilocks": "Goldilocks"}
 PROTOCOLS = {
     "reedweave_ub": ("ReedWeave_UB", "#009E73"),
+    "reedweave_jb": ("ReedWeave_JB", "#AA4499"),
     "fri": ("FRI", "#0072B2"),
     "stir": ("STIR", "#D55E00"),
     "whir": ("WHIR", "#CC79A7"),
@@ -55,6 +56,9 @@ PCS_HEADER = "log_n,rho,threads,commit_time_ms,open_time_ms,verify_time_ms,proof
 HEADER = "base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB".split(",")
 PP_COLUMNS = ("base_field", "extension_degree", "m", "blowup",
               "terminal_coefficients", "num_queries")
+JB_HEADER = HEADER[:7] + ["agreement_numerator", "agreement_denominator"] + HEADER[7:]
+JB_PP_COLUMNS = PP_COLUMNS + ("agreement_numerator", "agreement_denominator")
+REEDWEAVE_PROTOCOLS = {"reedweave_ub", "reedweave_jb"}
 LOG_SIZES = tuple(range(20, 29))
 REPETITIONS = 5
 METRICS = (
@@ -82,7 +86,15 @@ def csv_path(protocol, root, field="goldilocks"):
 
 
 def validate_reedweave_ub(row, *, word_bytes=struct.calcsize("P")):
-    """Mirror UbParams::new on the plotting platform; no proof allocation.
+    return _validate_reedweave(row, word_bytes=word_bytes, jb=False)
+
+
+def validate_reedweave_jb(row, *, word_bytes=struct.calcsize("P")):
+    return _validate_reedweave(row, word_bytes=word_bytes, jb=True)
+
+
+def _validate_reedweave(row, *, word_bytes, jb):
+    """Mirror UbParams/JbParams geometry on the plotting platform; no security claim.
 
     Rust usize/pointers occupy one word and Vec metadata occupies three words.
     The optional word size permits synthetic 32/64-bit boundary regression tests.
@@ -104,7 +116,7 @@ def validate_reedweave_ub(row, *, word_bytes=struct.calcsize("P")):
         return value
 
     if row["base_field"] != "goldilocks":
-        raise ValueError("ReedWeave_UB requires base_field=goldilocks")
+        raise ValueError("ReedWeave requires base_field=goldilocks")
     e, log_d, m, blowup, terminal, queries = (
         int(row[column]) for column in ("extension_degree", "log_d", "m", "blowup",
                                         "terminal_coefficients", "num_queries"))
@@ -126,12 +138,21 @@ def validate_reedweave_ub(row, *, word_bytes=struct.calcsize("P")):
         raise ValueError("pp arithmetic overflow")
     if domain > 1 << 32:
         raise ValueError("encoding domain exceeds Goldilocks two-adicity")
+    if jb:
+        numerator, denominator = (int(row[key]) for key in
+                                  ("agreement_numerator", "agreement_denominator"))
+        if not 0 < numerator < denominator <= (1 << 32) - 1:
+            raise ValueError("agreement must satisfy 0 < numerator < denominator within u32")
+        if math.gcd(numerator, denominator) != 1:
+            raise ValueError("agreement fraction must be canonical (reduced)")
+        if blowup * numerator * numerator <= denominator * denominator:
+            raise ValueError("agreement must be strictly above the Johnson boundary")
     # Keep these intermediate and aggregate bounds in sync with core/lib.rs.
     matrix = mul(blowup, d)
     mul(matrix, 8)
     width = mul(8, e)
     mul(domain, width)
-    mul(add(mul(m, width), 32), 1)
+    mul(add(mul(m, width), width + 84 if jb else 32), 1)
     nodes = mul(domain, 2) - 1
     mul(nodes, 32)
     query_slots = mul(queries, 2)
@@ -140,12 +161,13 @@ def validate_reedweave_ub(row, *, word_bytes=struct.calcsize("P")):
     openings = min(query_slots, domain)
     row_bytes = add(mul(m, 8), vec_bytes)
     initial_bytes = mul(openings, row_bytes)
-    prefix_bytes = add(mul(m, 8), mul(rounds, 2 * width), mul(rounds - 1, 32), mul(terminal, width))
+    prefix_bytes = add(mul(m, 8), mul(rounds, (4 if jb else 2) * width), mul(rounds - 1, 32), mul(terminal, width))
     framing_bytes = add(mul(openings, 10), mul(rounds, 4 * vec_bytes + 40), 128)
     auth_bytes = mul(mul(mul(openings, domain.bit_length() - 1), rounds), 32)
     scalar_bytes = mul(mul(openings, rounds), width)
     mul(add(initial_bytes, auth_bytes, scalar_bytes, prefix_bytes, framing_bytes), 1)
-    return log_d, ("goldilocks", e, m, blowup, terminal, queries)
+    identity = ("goldilocks", e, m, blowup, terminal, queries)
+    return log_d, identity + ((numerator, denominator) if jb else ())
 
 
 def discover_protocols(results, plonky3_results=None):
@@ -184,7 +206,8 @@ def load_means(results: Path, plonky3_results: Path | None = None,
         for field in fields:
             path = csv_path(protocol, root, field)
             identities = {}
-            header = HEADER if protocol == "reedweave_ub" else PCS_HEADER
+            header = (JB_HEADER if protocol == "reedweave_jb" else
+                      HEADER if protocol == "reedweave_ub" else PCS_HEADER)
             groups: dict[tuple[int, int], list[dict[str, str]]] = {}
             with path.open(newline="") as stream:
                 reader = csv.DictReader(stream)
@@ -195,8 +218,9 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                         raise ValueError(f"{path}:{reader.line_num}: row must have exactly {len(header)} columns")
                     try:
                         thread_count = int(row["threads"])
-                        if protocol == "reedweave_ub":
-                            log_n, identity = validate_reedweave_ub(row)
+                        if protocol in REEDWEAVE_PROTOCOLS:
+                            validator = validate_reedweave_jb if protocol == "reedweave_jb" else validate_reedweave_ub
+                            log_n, identity = validator(row)
                             if thread_count <= 0:
                                 raise ValueError("threads must be positive")
                         else:
@@ -213,12 +237,14 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                                     raise ValueError("code rate must be between 0 and 1")
                             elif row["rho"] != "1/2":
                                 raise ValueError("incompatible rate")
+                        # Check campaign identity before thread filtering: a selected
+                        # thread must not hide incompatible pp measured on another.
+                        if protocol in REEDWEAVE_PROTOCOLS and log_n in log_sizes:
+                            if identities.setdefault(log_n, identity) != identity:
+                                raise ValueError(f"ambiguous {PROTOCOLS[protocol][0]} pp: parameters must be fixed at each log_d "
+                                                 "across trials and thread counts")
                         if log_n not in log_sizes or (threads is not None and thread_count not in threads):
                             continue
-                        if protocol == "reedweave_ub":
-                            if identities.setdefault(log_n, identity) != identity:
-                                raise ValueError("ambiguous ReedWeave_UB pp: parameters must be fixed at each log_d "
-                                                 "across trials and thread counts")
                         for column, _, _ in METRICS:
                             value = float(row[column])
                             if not math.isfinite(value) or value < 0:
@@ -229,8 +255,9 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                         raise ValueError(f"{path}:{reader.line_num}: {error}") from error
                     groups.setdefault((thread_count, log_n), []).append(row)
             for log_n, identity in sorted(identities.items()):
-                print(f"ReedWeave_UB log_d={log_n}: " + ", ".join(
-                    f"{key}={value}" for key, value in zip(PP_COLUMNS, identity)))
+                columns = JB_PP_COLUMNS if protocol == "reedweave_jb" else PP_COLUMNS
+                print(f"{PROTOCOLS[protocol][0]} log_d={log_n}: " + ", ".join(
+                    f"{key}={value}" for key, value in zip(columns, identity)))
             if not groups:
                 raise ValueError(f"{path}: no measurements")
             counts = set(threads) if threads is not None else {t for t, _ in groups}
@@ -326,7 +353,8 @@ def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
         for protocol in protocols:
             name, color = PROTOCOLS[protocol]
             # Format only the legend; keep the CSV directory name unchanged.
-            label = r"ReedWeave$_{\mathrm{UB}}$" if protocol == "reedweave_ub" else name
+            label = (rf"ReedWeave$_{{\mathrm{{{protocol[-2:].upper()}}}}}$"
+                     if protocol in REEDWEAVE_PROTOCOLS else name)
             values = [data[profile, threads, n, protocol][metric] for n in log_sizes]
             ax.plot(log_sizes, values, color=color, label=label, linestyle="-", linewidth=1.8,
                     marker="o", markersize=5, markeredgecolor="white", markeredgewidth=0.6)
@@ -406,7 +434,7 @@ def main():
                         help="Figure root; writes <out>/<base_field>/threads_<count>.png directly. "
                              "Default: <results>/figures")
     parser.add_argument("--log-sizes", "--log-d", type=parse_log_sizes, default=LOG_SIZES,
-                        help="Size exponent list or inclusive range, e.g. 1,2,3 or 1..3 (default: 20..28); ReedWeave_UB log_d, others native log_n")
+                        help="Size exponent list or inclusive range, e.g. 1,2,3 or 1..3 (default: 20..28); ReedWeave UB/JB log_d, others native log_n")
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--validate-only", action="store_true",
                         help="Validate CSV completeness without importing Matplotlib or plotting")
@@ -425,8 +453,10 @@ def main():
     print(f"Validated {len(data)} configurations, {records} input records "
           f"in {len({(f, p) for f, _, _, p in data})} CSVs; protocols={','.join(protocols)}.")
     print("Cross-protocol inputs, security assumptions and PoW can differ; compare native configurations, not identical tasks.")
-    if "reedweave_ub" in protocols:
-        print("ReedWeave_UB: structural pp validation only; security strength has not been assessed.")
+    for protocol in protocols:
+        if protocol in REEDWEAVE_PROTOCOLS:
+            print(f"{PROTOCOLS[protocol][0]}: structural pp validation only; security strength has not been assessed. "
+                  "No Fiat–Shamir security certification is implied.")
     for protocol in protocols:
         if protocol in SINGLE_RECORD_PROTOCOLS:
             print(f"{PROTOCOLS[protocol][0]}: one supplied record per size by default, "
