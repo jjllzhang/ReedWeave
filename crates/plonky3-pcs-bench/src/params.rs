@@ -1,11 +1,11 @@
 //! Audited parameters plus scalar admission checks; no prover data is allocated.
-use brakefri_primitives::fields::CanonicalField;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_security::whir::SecurityAssumption;
 use p3_stir::{StirConfig, StirParameters, TwoAdicStirPcs};
+use reedweave_primitives::fields::CanonicalField;
 
 use crate::{
     Result,
@@ -13,7 +13,7 @@ use crate::{
     crypto::{BaseMmcs, ChallengeMmcs, Challenger, mmcs},
 };
 
-/// Fixed comparison FRI geometry, independent of parameterized BrakeFRI.
+/// Fixed comparison FRI geometry, independent of parameterized ReedWeave.
 pub const FRI_TERMINAL_COEFFICIENTS: usize = 128;
 
 pub type Fri<F, EF> = TwoAdicFriPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>>;

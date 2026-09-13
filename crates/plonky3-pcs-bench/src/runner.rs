@@ -6,8 +6,6 @@ use crate::{
     params::{self, Audit},
     resources,
 };
-use brakefri_primitives::fields::{CanonicalField, Goldilocks};
-use brakefri_runtime::ExecutionContext;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::Pcs;
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
@@ -16,6 +14,8 @@ use p3_field::{
     extension::CubicTrinomialExtensionField,
 };
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
+use reedweave_primitives::fields::{CanonicalField, Goldilocks};
+use reedweave_runtime::ExecutionContext;
 use serde::de::DeserializeOwned;
 use std::time::Instant;
 
@@ -25,7 +25,7 @@ pub(crate) type GoldilocksCubic = CubicTrinomialExtensionField<Goldilocks>;
 #[path = "runner_tests.rs"]
 mod tests;
 
-/// SplitMix64-v1 fixture stream, matching BrakeFRI's coefficient fixtures.
+/// SplitMix64-v1 fixture stream, matching ReedWeave's coefficient fixtures.
 /// Never used for internal Fiat-Shamir challenges.
 #[derive(Clone)]
 pub(crate) struct Fixture(pub(crate) u64);

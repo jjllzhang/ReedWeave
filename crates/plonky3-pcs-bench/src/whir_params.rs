@@ -1,9 +1,9 @@
 //! Native WHIR parameters and a conservative, whole-protocol algebraic budget.
 //! The formulas and folding convention are implemented below; see the repository
 //! README.md for benchmark commands and measurement semantics.
-use brakefri_primitives::fields::Goldilocks;
 use p3_field::{Field as _, TwoAdicField};
 use p3_whir::parameters::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirConfig};
+use reedweave_primitives::fields::Goldilocks;
 
 use crate::{
     Result,

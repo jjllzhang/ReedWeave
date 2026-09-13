@@ -1,0 +1,15 @@
+[package]
+name = "reedweave-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+reedweave-primitives.workspace = true
+reedweave-runtime.workspace = true
+p3-field.workspace = true
+p3-matrix.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+postcard.workspace = true

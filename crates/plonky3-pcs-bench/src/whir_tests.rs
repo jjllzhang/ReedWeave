@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{Field, Protocol};
-use brakefri_runtime::ExecutionContext;
 use p3_field::PrimeCharacteristicRing;
+use reedweave_runtime::ExecutionContext;
 
 #[test]
 fn serialized_native_trials_verify_in_both_local_pool_sizes() {

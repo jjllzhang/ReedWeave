@@ -1,10 +1,6 @@
 //! Scalar canonical Blake3 MMCS and an unbiased byte-backed field challenger.
 use std::marker::PhantomData;
 
-use brakefri_primitives::{
-    fields::CanonicalField,
-    hash::{NodeHash, TranscriptHash},
-};
 use p3_blake3::Blake3;
 use p3_challenger::{
     CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, FieldChallenger,
@@ -14,6 +10,10 @@ use p3_commit::ExtensionMmcs;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_stir::StirCommitment;
 use p3_symmetric::{CryptographicHasher, MerkleCap};
+use reedweave_primitives::{
+    fields::CanonicalField,
+    hash::{NodeHash, TranscriptHash},
+};
 
 pub type Cap<F> = MerkleCap<F, [u8; 32]>;
 pub type BaseMmcs<F> = MerkleTreeMmcs<F, u8, LeafHash<F>, NodeHash, 2, 32>;

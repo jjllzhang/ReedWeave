@@ -1,7 +1,6 @@
 //! Native multilinear WHIR: one Goldilocks hypercube table, one prescribed point.
 use std::time::Instant;
 
-use brakefri_primitives::fields::Goldilocks;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::MultilinearPcs;
 use p3_dft::Radix2DitParallel;
@@ -16,6 +15,7 @@ use p3_whir::{
     fiat_shamir::domain_separator::DomainSeparator,
     pcs::{proof::PcsProof, prover::WhirProver},
 };
+use reedweave_primitives::fields::Goldilocks;
 
 use crate::{
     Result,

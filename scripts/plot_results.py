@@ -4,10 +4,10 @@
 Paths do not distinguish timing models: use logs to identify measurement provenance.
 Do not mix historical times with new core algorithm times.
 Read each protocol from <root>/<protocol>/goldilocks.csv.
-BrakeFRI requires the full public-parameter schema; legacy compact headers are rejected.
+ReedWeave requires the full public-parameter schema; legacy compact headers are rejected.
 The CSV has no protocol-version column; campaign provenance is external metadata.
-Use --log-d 1..3 (alias --log-sizes) to select other sizes, including tiny v3 cases.
-BrakeFRI pp may vary with log_d, but must be fixed within each size across trials
+Use --log-d 1..3 (alias --log-sizes) to select other sizes, including tiny cases.
+ReedWeave pp may vary with log_d, but must be fixed within each size across trials
 and thread counts; ambiguous campaigns are rejected.
 Plot arithmetic means of measured trials.
 CSV times are already in ms and proof sizes in KiB; no unit conversion is applied.
@@ -20,9 +20,10 @@ By default, use thread counts shared by all selected protocols for each field;
 --threads selects explicit counts and requires every protocol to cover them.
 Every included thread count must cover all selected size exponents.
 By default, discover available protocol CSVs and compare supported protocols per
-field. BaseFold, Shockwave and WHIR are Goldilocks-only. Explicit --protocols
+field. BaseFold, Brakedown, Shockwave and WHIR are Goldilocks-only. Explicit --protocols
 compares their common supported fields unless --fields restricts them further.
-Shockwave supplies one record per size; other protocols default to five records.
+Brakedown and Shockwave supply one record per size; others default to five records.
+Brakedown retains its measured code rate rather than requiring rho=1/2.
 Input semantics, security assumptions and PoW settings can differ across protocols.
 Compact CSVs do not record seeds/revisions or trial IDs: use separate directories
 for independent campaigns and retain benchmark logs for reproducibility.
@@ -33,19 +34,22 @@ import argparse
 import csv
 import math
 import struct
+from fractions import Fraction
 from pathlib import Path
 from statistics import mean
 
 FIELDS = {"goldilocks": "Goldilocks"}
 PROTOCOLS = {
-    "brakefri": ("BrakeFRI", "#009E73"),
+    "reedweave": ("ReedWeave", "#009E73"),
     "fri": ("FRI", "#0072B2"),
     "stir": ("STIR", "#D55E00"),
     "whir": ("WHIR", "#CC79A7"),
     "basefold": ("BaseFold", "#E69F00"),
     "shockwave": ("Shockwave", "#56B4E9"),
+    "brakedown": ("Brakedown", "#332288"),
 }
-GOLDILOCKS_ONLY = {"whir", "basefold", "shockwave"}
+GOLDILOCKS_ONLY = {"whir", "basefold", "shockwave", "brakedown"}
+SINGLE_RECORD_PROTOCOLS = {"shockwave", "brakedown"}
 PLONKY3_PROTOCOLS = {"fri", "stir", "whir"}
 PCS_HEADER = "log_n,rho,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB".split(",")
 HEADER = "base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB".split(",")
@@ -69,7 +73,7 @@ def protocol_root(protocol, results, plonky3_results=None):
 
 
 def expected_repetitions(protocol, override=None):
-    return override if override is not None else (1 if protocol == "shockwave" else REPETITIONS)
+    return override if override is not None else (1 if protocol in SINGLE_RECORD_PROTOCOLS else REPETITIONS)
 
 
 def csv_path(protocol, root, field="goldilocks"):
@@ -77,7 +81,7 @@ def csv_path(protocol, root, field="goldilocks"):
     return directory / f"{field}.csv"
 
 
-def validate_brakefri(row, *, word_bytes=struct.calcsize("P")):
+def validate_reedweave(row, *, word_bytes=struct.calcsize("P")):
     """Mirror BrakeParams::new on the plotting platform; no proof allocation.
 
     Rust usize/pointers occupy one word and Vec metadata occupies three words.
@@ -100,7 +104,7 @@ def validate_brakefri(row, *, word_bytes=struct.calcsize("P")):
         return value
 
     if row["base_field"] != "goldilocks":
-        raise ValueError("BrakeFRI requires base_field=goldilocks")
+        raise ValueError("ReedWeave requires base_field=goldilocks")
     e, log_d, m, blowup, terminal, queries = (
         int(row[column]) for column in ("extension_degree", "log_d", "m", "blowup",
                                         "terminal_coefficients", "num_queries"))
@@ -163,7 +167,7 @@ def comparison_fields(protocols, fields=None) -> tuple[str, ...]:
 
 
 def load_means(results: Path, plonky3_results: Path | None = None,
-                 protocols=("brakefri",), repetitions: int | None = None,
+                 protocols=("reedweave",), repetitions: int | None = None,
                  threads: tuple[int, ...] | None = None,
                  fields: tuple[str, ...] | None = None,
                  log_sizes: tuple[int, ...] = LOG_SIZES
@@ -180,7 +184,7 @@ def load_means(results: Path, plonky3_results: Path | None = None,
         for field in fields:
             path = csv_path(protocol, root, field)
             identities = {}
-            header = HEADER if protocol == "brakefri" else PCS_HEADER
+            header = HEADER if protocol == "reedweave" else PCS_HEADER
             groups: dict[tuple[int, int], list[dict[str, str]]] = {}
             with path.open(newline="") as stream:
                 reader = csv.DictReader(stream)
@@ -191,8 +195,8 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                         raise ValueError(f"{path}:{reader.line_num}: row must have exactly {len(header)} columns")
                     try:
                         thread_count = int(row["threads"])
-                        if protocol == "brakefri":
-                            log_n, identity = validate_brakefri(row)
+                        if protocol == "reedweave":
+                            log_n, identity = validate_reedweave(row)
                             if thread_count <= 0:
                                 raise ValueError("threads must be positive")
                         else:
@@ -200,13 +204,20 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                             max_log_n = 28 if protocol == "whir" else 30
                             if not 20 <= log_n <= max_log_n or thread_count not in (1, 32):
                                 raise ValueError("unexpected size/thread configuration")
-                            if row["rho"] != "1/2":
+                            if protocol == "brakedown":
+                                try:
+                                    rate = Fraction(row["rho"])
+                                except (ValueError, ZeroDivisionError) as error:
+                                    raise ValueError("invalid code rate") from error
+                                if not 0 < rate < 1:
+                                    raise ValueError("code rate must be between 0 and 1")
+                            elif row["rho"] != "1/2":
                                 raise ValueError("incompatible rate")
                         if log_n not in log_sizes or (threads is not None and thread_count not in threads):
                             continue
-                        if protocol == "brakefri":
+                        if protocol == "reedweave":
                             if identities.setdefault(log_n, identity) != identity:
-                                raise ValueError("ambiguous BrakeFRI pp: parameters must be fixed at each log_d "
+                                raise ValueError("ambiguous ReedWeave pp: parameters must be fixed at each log_d "
                                                  "across trials and thread counts")
                         for column, _, _ in METRICS:
                             value = float(row[column])
@@ -218,7 +229,7 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                         raise ValueError(f"{path}:{reader.line_num}: {error}") from error
                     groups.setdefault((thread_count, log_n), []).append(row)
             for log_n, identity in sorted(identities.items()):
-                print(f"BrakeFRI v3 log_d={log_n}: " + ", ".join(
+                print(f"ReedWeave log_d={log_n}: " + ", ".join(
                     f"{key}={value}" for key, value in zip(PP_COLUMNS, identity)))
             if not groups:
                 raise ValueError(f"{path}: no measurements")
@@ -306,7 +317,7 @@ def configure_y_axis(ax, title: str, unit: str, limits):
 
 
 def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
-                 protocols=("brakefri",), log_sizes=LOG_SIZES) -> Path:
+                 protocols=("reedweave",), log_sizes=LOG_SIZES) -> Path:
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 2, figsize=(13.2, 9.0))
@@ -314,15 +325,13 @@ def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
     for ax, (metric, title, unit) in zip(axes.flat, METRICS):
         for protocol in protocols:
             name, color = PROTOCOLS[protocol]
-            if protocol == "brakefri":
-                name += " v3"
             values = [data[profile, threads, n, protocol][metric] for n in log_sizes]
             ax.plot(log_sizes, values, color=color, label=name, linestyle="-", linewidth=1.8,
                     marker="o", markersize=5, markeredgecolor="white", markeredgewidth=0.6)
         configure_y_axis(ax, title, unit, axis_limits(data, profile, metric))
         ax.set_xlim(log_sizes[0] - 0.3, log_sizes[-1] + 0.3)
         ax.set_xticks(log_sizes, [rf"$2^{{{n}}}$" for n in log_sizes])
-        ax.set_xlabel("Native input size (BrakeFRI: coefficient capacity)", labelpad=7)
+        ax.set_xlabel("Number of constraints", labelpad=7)
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
                bbox_transform=fig.transFigure, ncol=len(protocols), frameon=False,
@@ -390,12 +399,12 @@ def main():
     parser.add_argument("--threads", type=parse_threads,
                         help="Thread counts, e.g. 32 or 1,32 (default: shared counts per field)")
     parser.add_argument("--repetitions", type=int,
-                        help="Override required records per configuration for every protocol (defaults: Shockwave 1, others 5)")
+                        help="Override required records per configuration for every protocol (defaults: Brakedown/Shockwave 1, others 5)")
     parser.add_argument("--out", type=Path,
                         help="Figure root; writes <out>/<base_field>/threads_<count>.png directly. "
                              "Default: <results>/figures")
     parser.add_argument("--log-sizes", "--log-d", type=parse_log_sizes, default=LOG_SIZES,
-                        help="Size exponent list or inclusive range, e.g. 1,2,3 or 1..3 (default: 20..28); BrakeFRI log_d, others native log_n")
+                        help="Size exponent list or inclusive range, e.g. 1,2,3 or 1..3 (default: 20..28); ReedWeave log_d, others native log_n")
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--validate-only", action="store_true",
                         help="Validate CSV completeness without importing Matplotlib or plotting")
@@ -414,10 +423,12 @@ def main():
     print(f"Validated {len(data)} configurations, {records} input records "
           f"in {len({(f, p) for f, _, _, p in data})} CSVs; protocols={','.join(protocols)}.")
     print("Cross-protocol inputs, security assumptions and PoW can differ; compare native configurations, not identical tasks.")
-    if "brakefri" in protocols:
-        print("BrakeFRI v3: structural pp validation only; security strength has not been assessed.")
-    if "shockwave" in protocols:
-        print("Shockwave: one supplied record per size by default, not five repeated measurements.")
+    if "reedweave" in protocols:
+        print("ReedWeave: structural pp validation only; security strength has not been assessed.")
+    for protocol in protocols:
+        if protocol in SINGLE_RECORD_PROTOCOLS:
+            print(f"{PROTOCOLS[protocol][0]}: one supplied record per size by default, "
+                  "not five repeated measurements.")
     if args.validate_only:
         return
     import matplotlib
