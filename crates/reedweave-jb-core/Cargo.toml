@@ -1,0 +1,20 @@
+[package]
+name = "reedweave-jb-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+reedweave-primitives.workspace = true
+reedweave-runtime.workspace = true
+p3-field.workspace = true
+p3-challenger.workspace = true
+p3-symmetric.workspace = true
+p3-matrix.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+postcard.workspace = true
+
+[dev-dependencies]
+reedweave-ub-core = { path = "../reedweave-ub-core" }

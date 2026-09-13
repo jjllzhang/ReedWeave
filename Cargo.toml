@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/reedweave-ub-core", "crates/reedweave-primitives", "crates/reedweave-runtime", "crates/reedweave-ub-bench", "crates/plonky3-pcs-bench"]
+members = ["crates/reedweave-ub-core", "crates/reedweave-jb-core", "crates/reedweave-primitives", "crates/reedweave-runtime", "crates/reedweave-ub-bench", "crates/reedweave-jb-bench", "crates/plonky3-pcs-bench"]
 
 [workspace.package]
 version = "0.1.0"

@@ -812,6 +812,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "reedweave-jb-bench"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "reedweave-jb-core",
+ "reedweave-primitives",
+ "reedweave-runtime",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "reedweave-jb-core"
+version = "0.1.0"
+dependencies = [
+ "p3-challenger",
+ "p3-field",
+ "p3-matrix",
+ "p3-symmetric",
+ "postcard",
+ "reedweave-primitives",
+ "reedweave-runtime",
+ "reedweave-ub-core",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "reedweave-primitives"
 version = "0.1.0"
 dependencies = [
