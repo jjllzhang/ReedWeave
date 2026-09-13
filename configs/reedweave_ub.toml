@@ -1,8 +1,10 @@
+# ReedWeave_UB (Section 3 unique decoding), not ReedWeave_JB.
 # Goldilocks, blowup=2, 100-bit IOP soundness target.
+# CSV/PNG measurements use the corrected protocol; use a fresh output root for reruns.
 # Minimize expected protocol-only multiproof bytes with terminal_coefficients <= 256.
 # Search e in {1,2,3,5} and all valid power-of-two m and terminal sizes.
 # This does not certify Fiat-Shamir or hash security; wire sizes may differ.
-# Load explicitly with --config configs/reedweave.toml; no implicit config.
+# Load explicitly with --config configs/reedweave_ub.toml; no implicit config.
 # Run uses [pp] (log_d=20); sweep/preflight use the nine complete [[cases]].
 # Do not override pp axes when running this tuned sweep.
 [pp]
@@ -19,8 +21,8 @@ num_queries = 241
 threads = [1, 32]
 # One full discarded verified warmup, then this many measured trials.
 repetitions = 5
-# Core-only timing: <output_dir>/ReedWeave/goldilocks.csv
-# Plotter reads results/ReedWeave/goldilocks.csv; replace it only after validating a fresh run.
+# Core-only timing: <output_dir>/ReedWeave_UB/goldilocks.csv
+# Plotter reads results/ReedWeave_UB/goldilocks.csv; replace it only after validating a fresh run.
 output_dir = "results"
 seed = 20260906
 # Optional sweep/preflight axes; otherwise use [pp].
@@ -29,7 +31,7 @@ seed = 20260906
 # max_memory_mib = 65536
 # time_limit_seconds = 3600
 
-# Complete tuned cases: Q is the minimum certified by scripts/reedweave_queries.py.
+# Complete tuned cases: Q is the minimum certified by scripts/reedweave_ub_queries.py.
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2

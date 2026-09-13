@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find the smallest Q certified by ReedWeave.md's unique-decoding IOP bound.
+"""Find ReedWeave_UB's smallest Q using ReedWeave.md's unique-decoding IOP bound.
 
 Python 3.11+, standard library only. Input pp excludes Q; security_bits is a
 separate required input. For TOML, read only [pp] and ignore num_queries.
@@ -55,8 +55,10 @@ class PublicParams:
         if self.blowup < 2:
             raise ValueError("blowup must be at least 2 (rho < 1)")
         log_k = self.log_d - (self.m.bit_length() - 1)
-        if log_k < 1:
-            raise ValueError("m must divide d with k = d/m >= 2")
+        if log_k < 2:
+            raise ValueError("m must divide d with k = d/m >= 4")
+        if self.terminal_coefficients < 2:
+            raise ValueError("terminal_coefficients must be at least 2 (unique-decoding theorem)")
         if self.terminal_coefficients.bit_length() - 1 >= log_k:
             raise ValueError("terminal_coefficients must be at most k/2 (at least one binary fold)")
         # Check exponents before constructing d or N, including for huge log_d.
@@ -141,8 +143,9 @@ def theoretical_proof_size(pp: PublicParams, num_queries: int) -> dict[str, int 
     """Protocol-only bytes, with two independent full paths per query per layer.
 
     Count the initial commitment once, both scalar messages in each binary round,
-    and terminal coefficients, but no terminal table or terminal authentication.
-    No query indices, verifier messages, version/context tags, or vector prefixes
+    t-1 intermediate roots, and terminal coefficients, but no terminal root,
+    terminal table or terminal authentication.
+    No query indices, verifier messages, context digests, or vector prefixes
     are included. Even repeated queries are charged in full (no multiproofs).
     Goldilocks uses 8-byte coordinates. For custom q, assume byte-aligned base
     coordinates of ceil(log2(q)/8) bytes and e such coordinates per extension
@@ -154,7 +157,7 @@ def theoretical_proof_size(pp: PublicParams, num_queries: int) -> dict[str, int 
     t = (k // pp.terminal_coefficients).bit_length() - 1
     base_elements = pp.m * (1 + 2 * num_queries)
     extension_elements = 2 * t + pp.terminal_coefficients + 2 * num_queries * (t - 1)
-    hash_values = 1 + t + 2 * num_queries * (t * n - t * (t - 1) // 2)
+    hash_values = t + 2 * num_queries * (t * n - t * (t - 1) // 2)
     base_element_bytes = ((pp.q - 1).bit_length() + 7) // 8
     extension_element_bytes = pp.extension_degree * base_element_bytes
     base_payload = base_elements * base_element_bytes
