@@ -1,14 +1,18 @@
 # ReedWeave
 
-**ReedWeave_UB** is the unique-decoding base construction in Section 3 of the paper.
-**ReedWeave_JB** is reserved for the future Johnson-radius construction in Section 4;
-it is not implemented yet. Shared primitives and runtime keep the ReedWeave family name.
+**ReedWeave_UB** implements the unique-decoding base construction.
+**ReedWeave_JB** implements the DEEP-enhanced construction strictly below the
+Johnson radius. They have independent commitments, codecs and
+transcript domains; shared primitives and runtime keep the ReedWeave family name.
 
-Naming: Rust `ReedWeaveUb`, `UbParams`, `UbProof`; crates/CLI `reedweave-ub-core`
-and `reedweave-ub-bench`; plotting selector `reedweave_ub`; results directory `ReedWeave_UB`.
+| Variant | Rust | Crates/CLI | Plot selector | Results directory |
+|---|---|---|---|---|
+| UB | `ReedWeaveUb`, `UbParams`, `UbProof` | `reedweave-ub-core`, `reedweave-ub-bench` | `reedweave_ub` | `ReedWeave_UB` |
+| JB | `ReedWeaveJb`, `JbParams`, `JbProof` | `reedweave-jb-core`, `reedweave-jb-bench` | `reedweave_jb` | `ReedWeave_JB` |
+
 The old unqualified implementation names are no longer supported.
 
-Rust coefficient-input ReedWeave_UB PCS over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. See [ReedWeave.md](ReedWeave.md) for the protocol and soundness derivation.
+Rust coefficient-input PCSs over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. Protocol behavior, parameters, and security limitations are described below.
 
 ## Parameters and security
 
@@ -31,8 +35,8 @@ inputs. The natural-order word is an `N`-by-`m` matrix; each stored row is one o
 Proofs carry `t` evaluation-message pairs and only `t-1` intermediate oracle roots.
 There is no terminal root or terminal tree: verification evaluates the terminal
 polynomial directly at query points. The transcript label is
-`ReedWeave_UB-Section3-Multiproof`. The encoding starts with the complete context digest,
-with no version byte; obsolete encodings are rejected. UB and future JB must use
+`ReedWeave_UB-Multiproof`. The encoding starts with the complete context digest,
+with no version byte; obsolete encodings are rejected. UB and JB use
 separate transcript domains.
 
 ## Build and test
@@ -40,12 +44,11 @@ separate transcript domains.
 Use Rust 1.95+, Python 3.11+, and Matplotlib 3.10+ for plotting. Plonky3 revisions are pinned in `Cargo.toml` and `Cargo.lock`; no local upstream checkout is needed.
 
 ```sh
-cargo build --release -p reedweave-ub-bench -p plonky3-pcs-bench --locked
+cargo build --release -p reedweave-ub-bench -p reedweave-jb-bench -p plonky3-pcs-bench --locked
 cargo test --workspace --locked
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 ```
 
-Targeted checks: `cargo test -p reedweave-ub-core -p reedweave-primitives -p reedweave-ub-bench --locked`.
+Targeted checks: `cargo test -p reedweave-ub-core -p reedweave-jb-core -p reedweave-primitives -p reedweave-ub-bench -p reedweave-jb-bench --locked`.
 Tests use small fixtures and disposable outputs, not production benchmark sweeps.
 
 ## ReedWeave_UB benchmark
@@ -109,9 +112,114 @@ bytes = 8*B + 8*e*E + 32*H
 
 This counts prover-to-verifier communication, including the initial commitment once, but excludes verifier messages, query indices, terminal evaluation tables and serialization framing. It is not the actual wire size. The tuned config was selected using a separate multiproof expectation calculation; the calculator does not perform that optimization.
 
+## ReedWeave_JB
+
+### Parameters, protocol and security scope
+
+JB uses the same geometry and field profiles as UB, plus required public
+`agreement_numerator` and `agreement_denominator`. Their reduced rational value
+is `a=1-delta`, with **`sqrt(rho)<a<1`**. The strict comparison is checked with
+integers; no floating-point radius enters the verifier. For example, `a=18/25`
+at `blowup=2` gives `delta=0.28`, strictly below `1-sqrt(1/2)`.
+
+`ReedWeaveJb::commit` first fixes the initial Merkle root, then derives
+`zeta` uniformly from the challenge extension minus the base FFT domain, and
+computes `c_i=f_i(zeta)`. A `JbCommitment<P>` carries a context digest, root,
+`zeta`, and `m` extension-valued `deep_values`; it is **not a 32-byte root**.
+The immutable state can be reused at different base-field target points.
+`prove`/`verify` maintain the target and DEEP evaluation claims through the same
+folding challenges, with four extension-valued messages per round, `t-1`
+intermediate roots, and no terminal tree. Encoding and initial leaves remain
+base-valued; increasing extension degree does not enlarge the base FFT domain.
+
+`open_deep` checks root equality, all DEEP component evaluations, and strict
+**joint column distance** `errors*denominator < N*(denominator-numerator)`.
+`validate_commitment` checks shape, context and challenge replay, not knowledge
+of an opening. Parameter-aware commitment/proof codecs reject malformed lengths
+before allocation and enforce canonical encodings. `verify_encoded` compares
+the full caller-expected commitment and intended `(z,y)`, not only the root.
+
+**Security limitation:** the calculator bounds interactive IOP errors only. This implementation
+uses separately domain-separated Fiat–Shamir commit/evaluation transcripts;
+Merkle/Fiat–Shamir compilation losses, grinding, and ROM/QROM guarantees are not
+certified by the calculator or functional tests. No executable general list
+decoder/extractor, zero knowledge, or multipoint batching is provided.
+
+### Query calculator and configurations
+
+[The JB calculator](scripts/reedweave_jb_queries.py) follows the UB CLI convention:
+Q alone on stdout, metadata on stderr, or a structured `--json` report. It reads
+only `[pp]` from TOML, ignores its old `num_queries` and `[[cases]]`, and applies
+CLI overrides. Without an explicit extension degree, it selects the smallest
+feasible degree from `{1,2,3,5}`; explicit degrees are never silently upgraded.
+
+```sh
+python3 scripts/reedweave_jb_queries.py --base-field goldilocks --log-d 20 \
+  --m 32 --blowup 2 --terminal-coefficients 256 \
+  --agreement 18/25 --security-bits 100 --json
+
+python3 scripts/reedweave_jb_queries.py --config configs/reedweave_jb.toml \
+  --security-bits 100 --json
+```
+
+For `B=floor(1/(a^2-rho))` and `qK=q0^e`, it certifies the minimum `Q>=1` for
+one commitment plus one evaluation under the conservative IOP union bound:
+
+```text
+binom(B,2)*(k-1)/(qK-N)
++ err(C0,m,delta) + sum_{j=0}^{t-1} err(C_(j+1),2,delta)
++ B*(m-1+t)/qK + a^Q <= 2^-security_bits
+```
+
+The MCA errors use the applicable unique-decoding or Johnson-radius bound **at every layer**, including
+`C_t`; the Johnson branch uses `(k_j-1)/N_j` and its local slack. Exact rational
+square-root intervals certify both Q and Q-1. An exhausted algebraic budget is
+reported as unprovable with this bound, not as an attack or a reason to increase Q.
+For the first command above, `e=3,Q=212,B=54`; forcing `e=2` cannot certify 100 bits.
+Repeated evaluations require a corresponding total budget, not an unlimited
+reuse of a single-opening security estimate.
+
+Communication reports include the full protocol commitment once and distinguish
+independent paths from the expected antipodal-pair multiproof size. With the
+same e/Q/geometry, JB adds `(m+1+2t)*8e` protocol bytes over UB. Context/framing
+and public `(z,y)` are excluded from these estimates; benchmark proof size is
+the actual serialized commitment-plus-proof length.
+
+[configs/reedweave_jb.toml](configs/reedweave_jb.toml) supplies nine 100-bit IOP
+cases for `log_d=20..28`, with `terminal_coefficients=256`.
+The TOML comments record the finite candidate grid, objective and reproduction
+command. Detailed error/certificate reports are generated on demand with
+`--search --json`; no generated audit JSON is stored in the repository or required
+at runtime. These are selected theoretical parameters, **not globally optimal
+configurations or performance measurements**.
+Use the calculator's `--help` for bounded grid search and explicit selection
+objectives; minimizing feasible e is different from minimizing expected bytes.
+
+### Benchmarking
+
+```sh
+# Geometry/resource admission only; no proof allocation or result writes.
+target/release/reedweave-jb-bench preflight --config configs/reedweave_jb.toml --threads 32
+
+# A new campaign, never appended to historical UB measurements.
+target/release/reedweave-jb-bench sweep --config configs/reedweave_jb.toml \
+  --threads 32 --out results-jb-new
+```
+
+`run` reads `[pp]`; `sweep`/`preflight` read complete `[[cases]]`. Admission,
+worker isolation and core-v1 timing follow UB. Commit time includes DEEP challenge
+generation and c evaluation; Open includes both evaluation chains; typed Verify
+includes commitment challenge replay. Canonical wire round-trip stays outside
+timers. Output is `<out>/ReedWeave_JB/goldilocks.csv`, with both agreement fields
+in addition to the complete UB-style public parameters. A curated JB campaign
+is bundled as `results/ReedWeave_JB/goldilocks.csv` (nine sizes, five trials each,
+32 threads); the plotter validates it like the UB file. Use fresh output roots for
+new campaigns and retain the chosen parameters and execution logs. A generated
+JSON report may optionally accompany your campaign outputs.
+
 ## Timing and result files
 
-Current ReedWeave_UB, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
+Current ReedWeave_UB, ReedWeave_JB, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
 
 - **Commit:** encoding/FFT, Merkle construction and native commitment work; stops before serialization.
 - **Open:** complete typed proof generation, including transcript, folds and multiproofs; stops before serialization.
@@ -119,31 +227,34 @@ Current ReedWeave_UB, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
 
 Serialization, decoding, canonical encoding checks and transport consistency checks still run, outside timers. Fixture generation, pool/process setup and CSV writes are also outside timers. RS encoding and lazy DFT work remain timed. ReedWeave_UB's `verify_encoded` API retains end-to-end checks.
 
-`proof_size_KiB` is the actual serialized commitment-plus-proof length, not the independent-path estimate. ReedWeave_UB includes its initial 32-byte root once, plus the evaluation proof including context framing. Times are milliseconds; KiB is bytes/1024. Each verified trial is a separate row, rounded to three decimals.
+`proof_size_KiB` is the actual serialized commitment-plus-proof length, not the independent-path estimate. ReedWeave_UB includes its initial 32-byte root once, plus the evaluation proof including context framing; ReedWeave_JB measures its full serialized DEEP commitment plus evaluation proof. Times are milliseconds; KiB is bytes/1024. Each verified trial is a separate row, rounded to three decimals.
 
 **Runner output and curated plotting input use the same relative layout; use a fresh output root for new campaigns:**
 
 | Purpose | Path |
 |---|---|
 | ReedWeave_UB runner output | `<out>/ReedWeave_UB/goldilocks.csv` |
+| ReedWeave_JB runner output | `<out>/ReedWeave_JB/goldilocks.csv` |
 | Curated ReedWeave_UB plotting input | `results/ReedWeave_UB/goldilocks.csv` |
+| Curated ReedWeave_JB plotting input | `results/ReedWeave_JB/goldilocks.csv` |
 | Other protocol CSVs | `<out>/<protocol>/goldilocks.csv` |
 | Comparison figure | `results/figures/goldilocks/threads_32.png` |
 
-`results/ReedWeave_UB/goldilocks.csv` contains a fresh run of the corrected implementation,
-without the redundant terminal tree. All 45 measured trials and nine discarded warmups
-passed verification. The comparison PNG has been regenerated using these results;
-other protocols' CSVs were retained unchanged. Build/source fingerprints, run settings,
-and verification logs are recorded in [benchmark.log](results/ReedWeave_UB/benchmark.log).
+`results/ReedWeave_UB/goldilocks.csv` and `results/ReedWeave_JB/goldilocks.csv`
+each contain a curated campaign over nine sizes with five verified trials per
+size (45 rows), 32 threads, terminal size 256, and core-v1 timing. The comparison
+PNG was regenerated from both files together with the comparison protocols' CSVs,
+which were retained unchanged. Per-run warmup and verifier logs are not bundled.
 
-The file covers nine sizes, five trials each, 32 threads, terminal size 256,
-and core-v1 timing. It records complete public parameters without a `protocol_version` column:
+Each file records complete public parameters without a `protocol_version` column;
+the JB file inserts `agreement_numerator,agreement_denominator` after `num_queries`.
+The UB header is:
 
 ```csv
 base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB
 ```
 
-Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. Other protocols' existing measurements were not re-run with the latest ReedWeave_UB campaign, so their timing compatibility is not established by the figure.
+Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. The comparison protocols' existing measurements were not re-run with the ReedWeave_UB/JB campaigns, so their timing compatibility is not established by the figure.
 
 ## Comparison protocols and plotting
 
@@ -155,16 +266,17 @@ python3 scripts/plot_results.py --threads 32 --validate-only
 python3 scripts/plot_results.py --threads 32
 ```
 
-The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave_UB, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. ReedWeave_UB requires the full public-parameter schema: legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
+The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave_UB, ReedWeave_JB, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. UB and JB require their complete public-parameter schemas; JB additionally validates its rational agreement. Legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
 
 Default sizes are `20..28`; `--log-d`/`--log-sizes` selects others. `--protocols` restricts protocols, `--results` selects an input root, `--plonky3-results` overrides only FRI/STIR/WHIR inputs, and `--out` selects the figure root. Missing explicitly selected data or incomplete trial coverage is an error. Means use five rows per point, except Shockwave and Brakedown, which each supply a single row; `--repetitions` overrides this. Zero timings use linear axes; positive-only metrics use base-2 log axes. Input semantics, security assumptions and PoW may differ across protocols: these are native-configuration comparisons, not identical-task security benchmarks.
 
 ## Workspace layout
 
-- `reedweave-ub-core`: public parameters, typed PCS, immutable prover state, codecs and verification.
+- `reedweave-ub-core`: UB public parameters, typed PCS, immutable prover state, codecs and verification.
+- `reedweave-jb-core`: independent DEEP commitment, dual-chain PCS, rational radius and bounded codecs.
 - `reedweave-primitives`: Goldilocks profiles, canonical hashing, DFT, MMCS and transcript.
 - `reedweave-runtime`: local execution budget and Rayon pool.
-- `reedweave-ub-bench`: configuration, resource admission, isolated scheduling and CSV output.
+- `reedweave-ub-bench` / `reedweave-jb-bench`: variant-specific configuration, resource admission, isolated scheduling and CSV output.
 - `plonky3-pcs-bench`: independent FRI/STIR/WHIR benchmarks and parameter audits.
 
-ReedWeave_UB binds complete public parameters and encoding conventions into the transcript. `ReedWeaveUb<P>` requires validated parameters matching the chosen field profile; untrusted bytes cannot choose the profile or statement. Historical implementation plans under `docs/` are archival, not current usage instructions; that directory remains ignored by Git.
+Both variants bind complete public parameters and encoding conventions into their independent transcripts. `ReedWeaveUb<P>` and `ReedWeaveJb<P>` require validated parameters matching the chosen field profile; untrusted bytes cannot choose the profile or statement. This README and the production scripts are the current usage instructions.
