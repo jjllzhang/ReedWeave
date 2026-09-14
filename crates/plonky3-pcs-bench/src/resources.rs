@@ -8,6 +8,7 @@ const MIB: u64 = 1 << 20;
 
 pub fn estimated_peak(case: &Case) -> u64 {
     let n = 1u64 << case.log_n;
+    let domain = n << crate::params::LOG_INV_RATE;
     let base = case.field.base_bytes() as u64;
     let extension = base * case.field.extension_degree() as u64;
     // Coefficient/evaluation conversion and base LDEs: eight n-sized buffers.
@@ -24,8 +25,8 @@ pub fn estimated_peak(case: &Case) -> u64 {
         0
     };
     let subtotal = 8 * n * base
-        + 8 * (2 * n) * extension
-        + 8 * (2 * n) * 32
+        + 8 * domain * extension
+        + 8 * domain * 32
         + sumcheck
         + case.threads as u64 * 2 * MIB;
     // Covers allocator overhead plus serialized/decoded proof and metadata.
@@ -103,6 +104,14 @@ pub fn admit(case: &Case, settings: &Settings) -> Result<()> {
         .max_memory_mib
         .map(|v| v.checked_mul(MIB).ok_or("memory cap overflow"))
         .transpose()?;
+    if settings.allow_memory_overcommit {
+        if let Some(limit) = configured {
+            if estimated_peak(case) > limit {
+                return Err("unmeasured: estimated peak exceeds explicit memory cap".into());
+            }
+        }
+        return Ok(());
+    }
     let limit = minimum(configured, available_memory().map(|v| v / 5 * 4))
         .ok_or("available memory unknown; specify --max-memory-mib")?;
     let peak = estimated_peak(case);

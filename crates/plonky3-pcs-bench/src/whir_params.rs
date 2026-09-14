@@ -9,7 +9,7 @@ use crate::{
     Result,
     config::{Case, Field, Protocol},
     crypto::Challenger,
-    params::{Audit, union_bits},
+    params::{Audit, LOG_INV_RATE, union_bits},
     runner::GoldilocksCubic,
 };
 
@@ -26,7 +26,7 @@ pub fn config(log_n: usize) -> Result<Config> {
             pow_bits: 0,
             folding_factor: FoldingFactor::Constant(FOLD_VARIABLES),
             soundness_type: SecurityAssumption::JohnsonBound,
-            starting_log_inv_rate: 1,
+            starting_log_inv_rate: LOG_INV_RATE,
             // Upstream default: halve the RS domain each round, rate exponent +1.
             round_log_inv_rates: Vec::new(),
         },
@@ -57,7 +57,7 @@ pub(crate) fn audit_config(config: &Config) -> Result<Audit> {
     let jb = SecurityAssumption::JohnsonBound;
     if config.params.soundness_type != jb
         || config.params.security_level != SECURITY_BITS
-        || config.params.starting_log_inv_rate != 1
+        || config.params.starting_log_inv_rate != LOG_INV_RATE
         || config.params.pow_bits != 0
         || config.max_pow_bits() != 0
         || !matches!(
@@ -79,20 +79,20 @@ pub(crate) fn audit_config(config: &Config) -> Result<Audit> {
         return Err("WHIR challenge field/domain gap too small".into());
     }
     let mut terms = vec![
-        jb.ood_error(config.num_variables, 1, bits, config.commitment_ood_samples),
+        jb.ood_error(config.num_variables, LOG_INV_RATE, bits, config.commitment_ood_samples),
         // Initial linear combination of OOD constraints and one public opening.
         bits as f64
             - libm::log2(2.0 * (config.commitment_ood_samples + 1) as f64)
-            - jb.list_size_bits(config.num_variables, 1),
+            - jb.list_size_bits(config.num_variables, LOG_INV_RATE),
     ];
     fold_terms(
         bits,
         config.num_variables,
-        1,
+        LOG_INV_RATE,
         config.round_folding_factor(0),
         &mut terms,
     );
-    let mut old_rate = 1;
+    let mut old_rate = LOG_INV_RATE;
     let mut queries = Vec::new();
     let mut radii = Vec::new();
     for (i, round) in config.round_parameters.iter().enumerate() {
@@ -179,7 +179,7 @@ mod tests {
             assert_eq!(config.folding_schedule, vec![2; (log_n - 5) / 2]);
             assert_eq!(audit.terminal, if log_n % 2 == 0 { 64 } else { 32 });
             assert_eq!(audit.queries.len(), (log_n - 5) / 2);
-            assert_eq!(config.max_fft_size(), log_n - 1);
+            assert_eq!(config.max_fft_size(), log_n);
         }
     }
 
@@ -187,8 +187,8 @@ mod tests {
     fn endpoint_query_schedules_match_the_fixed_profile() {
         // q(r)=ceil(lambda_q/(r/2-log2(21/20))), with lambda_q=104 or 105.
         for (log_n, expected) in [
-            (20, vec![243, 112, 73, 54, 43, 36, 31]),
-            (28, vec![245, 113, 74, 55, 44, 36, 31, 27, 24, 22, 20]),
+            (20, vec![112, 73, 54, 43, 36, 31, 27]),
+            (28, vec![113, 74, 55, 44, 36, 31, 27, 24, 22, 20, 18]),
         ] {
             let config = config(log_n).unwrap();
             assert_eq!(audit_config(&config).unwrap().queries, expected);
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn per_stage_100_bit_queries_are_not_a_100_bit_union_bound() {
         let mut config = config(28).unwrap();
-        let mut rate = 1;
+        let mut rate = LOG_INV_RATE;
         for round in &mut config.round_parameters {
             round.num_queries = SecurityAssumption::JohnsonBound.queries(100, rate);
             rate = round.log_inv_rate;

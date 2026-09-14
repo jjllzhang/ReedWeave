@@ -52,7 +52,7 @@ impl Field {
 #[derive(Parser)]
 #[command(
     version,
-    about = "Plonky3 FRI/STIR univariate and WHIR native multilinear PCS benchmarks; audited 100-bit target, zero PoW; FRI/STIR/WHIR timing_model=core-v1"
+    about = "Plonky3 FRI/STIR univariate and WHIR native multilinear PCS benchmarks; fixed initial rate 1/4; audited 100-bit target, zero PoW; FRI/STIR/WHIR timing_model=core-v1"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -82,6 +82,10 @@ pub struct Settings {
     /// Whole child case wall time, including warmup and all repetitions.
     #[arg(long)]
     pub time_limit_seconds: Option<u64>,
+    /// Attempt cases even when the conservative estimate exceeds available RAM.
+    /// May cause an OS OOM kill. An explicit --max-memory-mib is still enforced.
+    #[arg(long)]
+    pub allow_memory_overcommit: bool,
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
@@ -132,7 +136,7 @@ impl Case {
     }
     pub fn label(&self) -> String {
         format!(
-            "{} {} extension={} log_n={} threads={}{}",
+            "{} {} extension={} log_n={} threads={} rate=1/4{}",
             self.protocol.name(),
             self.field.name(),
             self.field.extension_degree(),

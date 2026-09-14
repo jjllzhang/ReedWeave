@@ -105,6 +105,9 @@ fn isolated(case: &Case, settings: &Settings) -> Result<()> {
         .arg(settings.seed.to_string())
         .arg("--repetitions")
         .arg(settings.repetitions.to_string());
+    if settings.allow_memory_overcommit {
+        command.arg("--allow-memory-overcommit");
+    }
     if let Some(limit) = settings.max_memory_mib {
         command.arg("--max-memory-mib").arg(limit.to_string());
     }

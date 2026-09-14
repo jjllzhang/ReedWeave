@@ -19,6 +19,7 @@ fn serialized_native_trials_verify_in_both_local_pool_sizes() {
             repetitions: 1,
             max_memory_mib: None,
             time_limit_seconds: None,
+            allow_memory_overcommit: false,
         };
         let measured = execution
             .install(|| trial(&case, &settings, &mut Fixture(123)))

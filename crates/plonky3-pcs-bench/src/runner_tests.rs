@@ -15,6 +15,7 @@ fn measured_repetitions_and_failures_use_original_paths() {
         repetitions: 2,
         max_memory_mib: None,
         time_limit_seconds: None,
+        allow_memory_overcommit: false,
     };
     for protocol in [Protocol::Fri, Protocol::Stir] {
         let case = Case {
@@ -189,6 +190,7 @@ fn goldilocks_pcs_profiles_accept_serialized_single_polynomial_openings() {
         repetitions: 1,
         max_memory_mib: None,
         time_limit_seconds: None,
+        allow_memory_overcommit: false,
     };
     let execution = ExecutionContext::new(1).unwrap();
     for field in [Field::Goldilocks] {

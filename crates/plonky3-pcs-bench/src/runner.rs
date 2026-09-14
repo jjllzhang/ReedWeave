@@ -171,15 +171,15 @@ where
 
     // External opening point, supplied after commitment. Exclude the committed
     // LDE coset so the upstream quotient never has a zero denominator.
-    let shift_power = EF::from(F::GENERATOR.exp_power_of_2(case.log_n + 1));
+    let shift_power = EF::from(F::GENERATOR.exp_power_of_2(case.log_n + params::LOG_INV_RATE));
     let z = loop {
         let point = EF::from_basis_coefficients_fn(|_| points.field::<F>());
-        if point.exp_power_of_2(case.log_n + 1) != shift_power {
+        if point.exp_power_of_2(case.log_n + params::LOG_INV_RATE) != shift_power {
             break point;
         }
     };
     let context = format!(
-        "plonky3-pcs-bench-v1:{}:{}:extension={}:log_n={}:rate=1/2:fri=2,128,244:stir=4,JohnsonBound,100:pow=0:{}",
+        "plonky3-pcs-bench-v1:{}:{}:extension={}:log_n={}:rate=1/4:fri=2,128,151:stir=4,JohnsonBound,100:pow=0:{}",
         case.protocol.name(),
         case.field.name(),
         case.field.extension_degree(),

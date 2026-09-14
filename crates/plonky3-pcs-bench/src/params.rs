@@ -15,6 +15,9 @@ use crate::{
 
 /// Fixed comparison FRI geometry, independent of parameterized ReedWeave_UB.
 pub const FRI_TERMINAL_COEFFICIENTS: usize = 128;
+/// Fixed quarter-rate comparison profile (initial RS domain = 4n).
+pub const LOG_INV_RATE: usize = 2;
+pub const FRI_QUERIES: usize = 151;
 
 pub type Fri<F, EF> = TwoAdicFriPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>>;
 pub type Stir<F, EF> =
@@ -25,10 +28,10 @@ pub fn fri<F: CanonicalField + TwoAdicField, EF: ExtensionField<F>>() -> Fri<F, 
         Radix2DitParallel::default(),
         mmcs(0),
         FriParameters {
-            log_blowup: 1,
+            log_blowup: LOG_INV_RATE,
             log_final_poly_len: FRI_TERMINAL_COEFFICIENTS.ilog2() as usize,
             max_log_arity: 1,
-            num_queries: 244,
+            num_queries: FRI_QUERIES,
             commit_proof_of_work_bits: 0,
             query_proof_of_work_bits: 0,
             mmcs: ExtensionMmcs::new(mmcs(1)),
@@ -38,7 +41,7 @@ pub fn fri<F: CanonicalField + TwoAdicField, EF: ExtensionField<F>>() -> Fri<F, 
 fn stir_parameters<F: CanonicalField, EF: ExtensionField<F>>()
 -> StirParameters<ChallengeMmcs<F, EF>> {
     StirParameters {
-        log_blowup: 1,
+        log_blowup: LOG_INV_RATE,
         log_folding_factor: 2,
         log_starting_folding_factor: 2,
         soundness_type: SecurityAssumption::JohnsonBound,
@@ -87,12 +90,12 @@ where
     if case.protocol == Protocol::Whir {
         return crate::whir_params::audit(case);
     }
-    if case.log_n + 1 > F::TWO_ADICITY {
+    if case.log_n + LOG_INV_RATE > F::TWO_ADICITY {
         return Err("initial domain exceeds base-field two-adicity".into());
     }
     // Use a strict lower bound on log2(|EF|), including for domain-excluded samples.
     let lower_bits = EF::bits() - 1;
-    let domain = 1usize << (case.log_n + 1);
+    let domain = 1usize << (case.log_n + LOG_INV_RATE);
     if EF::order() - domain < (num_bigint::BigUint::from(1u32) << lower_bits) {
         return Err("challenge field/domain gap too small".into());
     }
@@ -100,17 +103,18 @@ where
         Protocol::Whir => unreachable!("WHIR uses its own parameter audit"),
         Protocol::Fri => {
             let n = (1usize << case.log_n) as f64;
-            let alpha = (3.0 * n + 1.0) / (4.0 * n);
+            let domain = domain as f64;
+            let alpha = (1.0 + (n + 1.0) / domain) / 2.0;
             let q_lower = libm::exp2(lower_bits as f64);
             let terms = [
                 lower_bits as f64 - libm::log2((case.log_n - 7) as f64 * (2.0 * n + 1.0)),
-                -244.0 * libm::log2(alpha),
-                libm::log2(q_lower - 2.0 * n) - libm::log2(2.0 * n),
+                -(FRI_QUERIES as f64) * libm::log2(alpha),
+                libm::log2(q_lower - domain) - libm::log2(2.0 * n),
             ];
             Audit {
                 bits: union_bits(&terms),
                 terminal: FRI_TERMINAL_COEFFICIENTS,
-                queries: vec![244],
+                queries: vec![FRI_QUERIES],
                 radii: vec![1.0 - alpha],
             }
         }
@@ -149,7 +153,7 @@ where
             stage_terms(
                 lower_bits,
                 case.log_n - 2 * rounds,
-                1 + rounds,
+                LOG_INV_RATE + rounds,
                 config.final_eta,
                 config.final_queries,
                 true,
@@ -158,7 +162,7 @@ where
             );
             queries.push(config.final_queries);
             let log_list = -0.5 - libm::log2(initial_eta);
-            terms.push(lower_bits as f64 - 2.0 * log_list - (case.log_n + 1) as f64);
+            terms.push(lower_bits as f64 - 2.0 * log_list - (case.log_n + LOG_INV_RATE) as f64);
             Audit {
                 bits: union_bits(&terms),
                 terminal: config.final_poly_len(),

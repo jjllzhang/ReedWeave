@@ -107,6 +107,22 @@ fn mixed_protocol_defaults_only_include_supported_cases() {
 }
 
 #[test]
+fn overcommit_preflight_keeps_security_audits_and_explicit_caps() {
+    let args = [
+        "preflight", "--protocols", "fri,stir,whir", "--log-n", "28",
+        "--threads", "32", "--allow-memory-overcommit",
+    ];
+    let output = cli(&args);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stderr).matches("algebraic_bound_bits=").count(), 3);
+    let mut capped = args.to_vec();
+    capped.extend(["--max-memory-mib", "1"]);
+    let output = cli(&capped);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("explicit memory cap"));
+}
+
+#[test]
 fn whir_resource_rejection_does_not_write_measurements() {
     let path = std::env::temp_dir().join(format!("whir-rejected-{}", std::process::id()));
     assert!(!path.exists());
