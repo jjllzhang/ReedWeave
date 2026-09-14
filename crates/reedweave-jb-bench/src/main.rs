@@ -73,15 +73,22 @@ fn execute_matrix(matrix: config::Matrix, measure: bool) -> Result<()> {
         let result = if measure {
             isolated(&case, &settings)
         } else {
-            let available = Available::detect();
-            let estimate = Estimate::new(&case)?;
-            println!(
-                "{} repetitions={} time_limit_seconds={:?}",
-                resources::describe(&case, &estimate, &available),
-                settings.repetitions,
-                settings.time_limit_seconds
-            );
-            resources::admit(&estimate, &settings, &available)
+            (|| -> Result<()> {
+                settings.measurement.validate(case.threads)?;
+                let available = Available::detect();
+                let estimate = Estimate::new(&case)?;
+                println!(
+                    "{} repetitions={} time_limit_seconds={:?} {}",
+                    resources::describe(&case, &estimate, &available),
+                    settings.repetitions,
+                    settings.time_limit_seconds,
+                    settings
+                        .measurement
+                        .campaign(settings.seed)?
+                        .replace('\n', " ")
+                );
+                resources::admit(&estimate, &settings, &available)
+            })()
         };
         if let Err(error) = result {
             failures += 1;
@@ -104,8 +111,12 @@ fn isolated(case: &Case, settings: &Settings) -> Result<()> {
         let description = resources::describe(case, &estimate, &available);
         eprintln!("{description}");
         resources::admit(&estimate, settings, &available)?;
-        // Reject incompatible files before launching any expensive work.
-        output::open_csv(&output::csv_path(case, &settings.output), &case.params()?)?;
+        settings.measurement.validate(case.threads)?;
+        // Validate existing CSVs without creating output before binding succeeds.
+        let path = output::csv_path(case, &settings.output);
+        if path.exists() && path.metadata()?.len() > 0 {
+            output::open_csv(&path, &case.params()?)?;
+        }
         let mut command = Process::new(std::env::current_exe()?);
         command
             .arg("run")
@@ -136,7 +147,16 @@ fn isolated(case: &Case, settings: &Settings) -> Result<()> {
             .arg("--seed")
             .arg(settings.seed.to_string())
             .arg("--repetitions")
-            .arg(settings.repetitions.to_string());
+            .arg(settings.repetitions.to_string())
+            .arg("--verify-repetitions")
+            .arg(settings.measurement.verify_repetitions().to_string());
+        if let Some(binding) = &settings.measurement.binding {
+            command
+                .arg("--cpu-list")
+                .arg(binding.cpu_list())
+                .arg("--numa-node")
+                .arg(binding.node().to_string());
+        }
         if let Some(limit) = settings.max_memory_mib {
             command.arg("--max-memory-mib").arg(limit.to_string());
         }

@@ -77,7 +77,7 @@ fn tiny_all_profiles_verified_and_isolated() {
         let sweep = bench(&root, &args);
         success(&sweep);
         let stderr = String::from_utf8_lossy(&sweep.stderr);
-        assert_eq!(stderr.matches("timing_model=core-v1").count(), 2);
+        assert_eq!(stderr.matches("timing_model=core-hot-verify").count(), 2);
         let progress: Vec<_> = stderr
             .lines()
             .filter(|s| s.starts_with("WARMUP VERIFIED ") || s.starts_with("VERIFIED "))
@@ -143,7 +143,7 @@ fn tiny_all_profiles_verified_and_isolated() {
 fn config_overlay_propagates_every_parameter_to_worker() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.toml");
-    std::fs::write(&path, "[pp]\nbase_field='invalid'\nextension_degree=4\nlog_d=0\nm=0\nblowup=0\nterminal_coefficients=0\nnum_queries=0\nagreement_numerator=0\nagreement_denominator=0\n[benchmark]\nthreads=[32]\nrepetitions=0\n").unwrap();
+    std::fs::write(&path, "[pp]\nbase_field='invalid'\nextension_degree=4\nlog_d=0\nm=0\nblowup=0\nterminal_coefficients=0\nnum_queries=0\nagreement_numerator=0\nagreement_denominator=0\n[benchmark]\nthreads=[32]\nrepetitions=0\nverify_repetitions=0\ncpu_list='invalid'\nnuma_node=1024\n").unwrap();
     let output = bench(
         directory.path(),
         &[
@@ -172,9 +172,23 @@ fn config_overlay_propagates_every_parameter_to_worker() {
             "1",
             "--repetitions",
             "1",
+            "--verify-repetitions",
+            "3",
+            "--no-binding",
         ],
     );
     success(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("verify_repetitions=3"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("verify_warmups=1"));
+    assert_eq!(
+        directory
+            .path()
+            .join("ReedWeave_JB")
+            .read_dir()
+            .unwrap()
+            .count(),
+        1
+    );
     let text =
         std::fs::read_to_string(directory.path().join("ReedWeave_JB/goldilocks.csv")).unwrap();
     assert_eq!(text.lines().count(), 2);
@@ -229,4 +243,56 @@ fn missing_pp_old_switches_and_resources_fail_without_output() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("unmeasured"));
     assert_eq!(directory.path().read_dir().unwrap().count(), 0);
+}
+
+#[test]
+fn binding_options_are_strict_and_output_is_csv_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut args = vec!["run"];
+    args.extend_from_slice(PP);
+    let degree = args
+        .iter()
+        .position(|&arg| arg == "--extension-degree")
+        .unwrap();
+    args[degree + 1] = "2";
+    args.extend_from_slice(&["--repetitions", "1", "--threads", "32"]);
+    for extra in [
+        vec!["--verify-repetitions", "0"],
+        vec!["--cpu-list", "0"],
+        vec!["--numa-node", "0"],
+        vec!["--cpu-list", "0", "--numa-node", "0"], // fewer CPUs than workers
+        vec!["--cpu-list", "0-31", "--numa-node", "1024"],
+        vec!["--cpu-list", "0-31", "--no-binding"],
+    ] {
+        let mut invalid = args.clone();
+        invalid.extend(extra);
+        assert!(!bench(directory.path(), &invalid).status.success());
+        assert_eq!(directory.path().read_dir().unwrap().count(), 0);
+    }
+    args.extend_from_slice(&["--verify-repetitions", "3"]);
+    success(&bench(directory.path(), &args));
+    success(&bench(directory.path(), &args)); // compatible append
+    let path = directory.path().join("ReedWeave_JB/goldilocks.csv");
+    let original = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(original.lines().count(), 3);
+    assert_eq!(path.parent().unwrap().read_dir().unwrap().count(), 1);
+    assert!(!path.with_extension("benchmark.txt").exists());
+    // Timing settings are logged, not used as an on-disk append guard.
+    *args.last_mut().unwrap() = "4";
+    let output = bench(directory.path(), &args);
+    success(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("verify_repetitions=4"));
+    let appended = std::fs::read_to_string(&path).unwrap();
+    assert!(appended.starts_with(&original));
+    assert_eq!(appended.lines().count(), 4);
+    assert_eq!(path.parent().unwrap().read_dir().unwrap().count(), 1);
+    // Existing sidecars are neither read nor overwritten/deleted.
+    let legacy = path.with_extension("benchmark.txt");
+    std::fs::write(&legacy, "legacy settings\n").unwrap();
+    success(&bench(directory.path(), &args));
+    assert_eq!(
+        std::fs::read_to_string(legacy).unwrap(),
+        "legacy settings\n"
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 5);
 }

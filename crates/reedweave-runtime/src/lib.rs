@@ -1,4 +1,5 @@
 //! Local execution budget shared by upstream DFT, Merkle construction, and authentication.
+pub mod benchmark;
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 use thiserror::Error;
 

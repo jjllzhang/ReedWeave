@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{hint::black_box, time::Instant};
 
 use reedweave_jb_core::{
     JbParams, ReedWeaveJb,
@@ -45,6 +45,8 @@ impl Fixture {
 }
 
 pub fn run(case: &Case, settings: &Settings) -> Result<()> {
+    // Only the isolated worker calls run: bind before creating threads or data.
+    settings.measurement.apply(case.threads)?;
     let params = case.params()?;
     let estimate = Estimate::new(case)?;
     resources::admit(&estimate, settings, &Available::detect())?;
@@ -62,12 +64,14 @@ fn run_generic<P: FieldProfile>(
     params: &JbParams,
     estimate: &Estimate,
 ) -> Result<()> {
+    let campaign = settings.measurement.campaign(settings.seed)?;
+    let path = output::csv_path(case, &settings.output);
     let execution = ExecutionContext::new(case.threads)?;
-    let mut csv = output::open_csv(&output::csv_path(case, &settings.output), params)?;
+    let mut csv = output::open_csv(&path, params)?;
     eprintln!(
-        "START {} timing_model=core-v1 resource_model=jb-v1 parameter_selection=explicit-geometry-only seed={} warmups=1 repetitions={}",
+        "START {} {} resource_model=jb parameter_selection=explicit-geometry-only warmups=1 repetitions={}",
         case.label(),
-        settings.seed,
+        campaign.replace('\n', " "),
         settings.repetitions
     );
     let point_seed = settings.seed ^ 0x706f696e74730000 ^ case.pp.log_d as u64;
@@ -96,17 +100,23 @@ fn run_generic<P: FieldProfile>(
         let prove_time = start.elapsed().as_secs_f64();
         let eval_bytes = encode_eval_proof::<P>(pcs.params(), &opening.proof)?;
 
-        // Strict wire round-trip and application binding are outside core-v1 timers.
+        // Strict wire round-trip and application binding are outside core timers.
         let received = decode_commitment::<P>(pcs.params(), &commit_bytes)?;
         if received != commitment {
             return Err("decoded commitment mismatch".into());
         }
         let decoded_proof = decode_eval_proof::<P>(pcs.params(), &eval_bytes)?;
-        let start = Instant::now();
-        // Typed verify includes commitment shape/context and zeta replay, as well
-        // as both evaluation chains; none of that work belongs outside this timer.
-        pcs.verify(&received, z, opening.y, &decoded_proof, &execution)?;
-        let verify_time = start.elapsed().as_secs_f64();
+        // Same decoded proof: one untimed verification, then a timed batch.
+        // Each call includes commitment shape/context, zeta replay and both chains.
+        let verify_time = settings.measurement.time_verification(|| {
+            pcs.verify(
+                black_box(&received),
+                black_box(z),
+                black_box(opening.y),
+                black_box(&decoded_proof),
+                &execution,
+            )
+        })?;
         let proof_size = commit_bytes
             .len()
             .checked_add(eval_bytes.len())
@@ -144,6 +154,7 @@ mod tests {
             let mut case = crate::tests::case();
             case.pp.extension_degree = degree;
             let settings = Settings {
+                measurement: Default::default(),
                 output: directory.path().into(),
                 seed: 42,
                 repetitions: 1,

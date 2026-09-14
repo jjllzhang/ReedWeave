@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use reedweave_ub_core::{UbParams, PublicParams};
+use reedweave_runtime::benchmark::{DEFAULT_VERIFY_REPETITIONS, Measurement};
+use reedweave_ub_core::{PublicParams, UbParams};
 use serde::Deserialize;
 
 use crate::Result;
@@ -9,7 +10,7 @@ use crate::Result;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Measured ReedWeave_UB trials (timing_model=core-v1): geometry validation only; security not evaluated"
+    about = "Measured ReedWeave_UB trials (timing_model=core-hot-verify): geometry validation only; security not evaluated"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -57,6 +58,18 @@ pub struct Common {
     pub seed: Option<u64>,
     #[arg(long)]
     pub repetitions: Option<usize>,
+    /// Timed verifications of the same proof, after one untimed verification (default 32).
+    #[arg(long)]
+    pub verify_repetitions: Option<usize>,
+    /// Linux CPU list, e.g. 0-31. Requires a matching --numa-node.
+    #[arg(long)]
+    pub cpu_list: Option<String>,
+    /// Bind future worker memory allocations to this NUMA node (Linux MPOL_BIND).
+    #[arg(long)]
+    pub numa_node: Option<usize>,
+    /// Ignore CPU/NUMA binding in the config; inherit the launch environment.
+    #[arg(long, conflicts_with_all = ["cpu_list", "numa_node"])]
+    pub no_binding: bool,
     /// Estimate-based admission cap, not an OS RSS limit.
     #[arg(long)]
     pub max_memory_mib: Option<u64>,
@@ -109,6 +122,9 @@ pub struct Benchmark {
     pub extension_degrees: Option<Vec<usize>>,
     pub threads: Vec<usize>,
     pub repetitions: usize,
+    pub verify_repetitions: usize,
+    pub cpu_list: Option<String>,
+    pub numa_node: Option<usize>,
     pub output_dir: PathBuf,
     pub seed: u64,
     pub max_memory_mib: Option<u64>,
@@ -121,6 +137,9 @@ impl Default for Benchmark {
             extension_degrees: None,
             threads: vec![1],
             repetitions: 5,
+            verify_repetitions: DEFAULT_VERIFY_REPETITIONS,
+            cpu_list: None,
+            numa_node: None,
             output_dir: "results".into(),
             seed: 20260906,
             max_memory_mib: None,
@@ -157,6 +176,7 @@ impl Case {
 }
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub measurement: Measurement,
     pub output: PathBuf,
     pub seed: u64,
     pub repetitions: usize,
@@ -175,7 +195,20 @@ impl Config {
 pub fn settings(config: Option<&Config>, common: &Common) -> Result<Settings> {
     let default = Benchmark::default();
     let b = config.map(|c| &c.benchmark).unwrap_or(&default);
+    let (cpu_list, numa_node) = if common.no_binding {
+        (None, None)
+    } else {
+        (
+            common.cpu_list.as_deref().or(b.cpu_list.as_deref()),
+            common.numa_node.or(b.numa_node),
+        )
+    };
     let settings = Settings {
+        measurement: Measurement::new(
+            common.verify_repetitions.unwrap_or(b.verify_repetitions),
+            cpu_list,
+            numa_node,
+        )?,
         output: common.out.clone().unwrap_or_else(|| b.output_dir.clone()),
         seed: common.seed.unwrap_or(b.seed),
         repetitions: common.repetitions.unwrap_or(b.repetitions),

@@ -1,9 +1,5 @@
-use std::time::Instant;
+use std::{hint::black_box, time::Instant};
 
-use reedweave_ub_core::{
-    UbParams, ReedWeaveUb,
-    codec::{decode_commitment, decode_eval_proof, encode_commitment, encode_eval_proof},
-};
 use reedweave_primitives::{
     fields::CanonicalField,
     transcript::{
@@ -12,6 +8,10 @@ use reedweave_primitives::{
     },
 };
 use reedweave_runtime::ExecutionContext;
+use reedweave_ub_core::{
+    ReedWeaveUb, UbParams,
+    codec::{decode_commitment, decode_eval_proof, encode_commitment, encode_eval_proof},
+};
 
 use crate::{
     Result,
@@ -45,6 +45,8 @@ impl Fixture {
 }
 
 pub fn run(case: &Case, settings: &Settings) -> Result<()> {
+    // Only the isolated worker calls run: bind before creating threads or data.
+    settings.measurement.apply(case.threads)?;
     let params = case.params()?;
     let estimate = Estimate::new(case)?;
     resources::admit(&estimate, settings, &Available::detect())?;
@@ -62,12 +64,14 @@ fn run_generic<P: FieldProfile>(
     params: &UbParams,
     estimate: &Estimate,
 ) -> Result<()> {
+    let campaign = settings.measurement.campaign(settings.seed)?;
+    let path = output::csv_path(case, &settings.output);
     let execution = ExecutionContext::new(case.threads)?;
-    let mut csv = output::open_csv(&output::csv_path(case, &settings.output))?;
+    let mut csv = output::open_csv(&path)?;
     eprintln!(
-        "START {} timing_model=core-v1 seed={} warmups=1 repetitions={}",
+        "START {} {} warmups=1 repetitions={}",
         case.label(),
-        settings.seed,
+        campaign.replace('\n', " "),
         settings.repetitions
     );
     let point_seed = settings.seed ^ 0x706f696e74730000 ^ case.pp.log_d as u64;
@@ -95,15 +99,23 @@ fn run_generic<P: FieldProfile>(
         let prove_time = start.elapsed().as_secs_f64();
         let eval_bytes = encode_eval_proof::<P>(pcs.params(), &opening.proof)?;
 
-        // Strict wire round-trip and application binding are outside core-v1 timers.
+        // Strict wire round-trip and application binding are outside core timers.
         let received = decode_commitment(&commit_bytes)?;
         if received != commitment {
             return Err("decoded commitment mismatch".into());
         }
         let decoded_proof = decode_eval_proof::<P>(pcs.params(), &eval_bytes)?;
-        let start = Instant::now();
-        pcs.verify(&received, z, opening.y, &decoded_proof, &execution)?;
-        let verify_time = start.elapsed().as_secs_f64();
+        // Same decoded proof: one untimed verification, then a timed batch.
+        // Every call performs the complete typed verification; no cached verdicts.
+        let verify_time = settings.measurement.time_verification(|| {
+            pcs.verify(
+                black_box(&received),
+                black_box(z),
+                black_box(opening.y),
+                black_box(&decoded_proof),
+                &execution,
+            )
+        })?;
         let proof_size = commit_bytes
             .len()
             .checked_add(eval_bytes.len())

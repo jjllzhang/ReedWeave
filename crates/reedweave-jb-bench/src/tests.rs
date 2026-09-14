@@ -214,6 +214,7 @@ fn dynamic_estimates_and_overflow_without_large_allocations() {
         .sum();
     assert_eq!(estimate.trees, tree_nodes as u64 * 32);
     let settings = Settings {
+        measurement: Default::default(),
         output: "unused".into(),
         seed: 0,
         repetitions: 1,
