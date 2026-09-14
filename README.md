@@ -76,7 +76,7 @@ target/release/reedweave-ub-bench run --config configs/reedweave_ub.toml --threa
 
 No config is loaded implicitly. `sweep` and `preflight` use the complete `[[cases]]`; `run` uses `[pp]` (the `log_d=20` case). CLI public-parameter flags override every selected case, so do not override them when reproducing the tuned campaign. The config retains thread choices `[1,32]`; `--threads 32` selects only the measurements currently stored in the repository. Use `--help` for lists/ranges and runtime options.
 
-Each case runs in a separate child process and local Rayon pool; supported benchmark thread counts are 1 and 32. There is no explicit CPU/NUMA affinity. Fixture generation uses deterministic `SplitMix64-v1`, seed `20260906`, with separate coefficient/point streams; Fiat–Shamir challenges do not use this generator. Each measured repetition commits afresh and opens at the next point. Warmup resets the point stream before measurements.
+Each case runs in a separate child process and local Rayon pool; supported benchmark thread counts are 1 and 32. The supplied ReedWeave configs bind CPUs `0-31` and memory to NUMA node `0` on the experiment host; adapt both settings on other machines. Fixture generation uses deterministic `SplitMix64-v1`, seed `20260906`, with separate coefficient/point streams; Fiat–Shamir challenges do not use this generator. Each measured repetition commits afresh and opens at the next point. Warmup resets the point stream before measurements.
 
 Preflight estimates memory, including retained state, temporary buffers, 25% overhead and 32 MiB. Admission uses the smaller of `--max-memory-mib` and 80% of detected available memory. This is not an OS RSS cap. `--time-limit-seconds` bounds the whole child, including setup and warmup. Failed cases return nonzero; only completed verified trials produce rows. Sweeps continue to later cases after a failure.
 
@@ -207,7 +207,7 @@ target/release/reedweave-jb-bench sweep --config configs/reedweave_jb.toml \
 ```
 
 `run` reads `[pp]`; `sweep`/`preflight` read complete `[[cases]]`. Admission,
-worker isolation and core-v1 timing follow UB. Commit time includes DEEP challenge
+worker isolation and `core-hot-verify` timing follow UB. Commit time includes DEEP challenge
 generation and c evaluation; Open includes both evaluation chains; typed Verify
 includes commitment challenge replay. Canonical wire round-trip stays outside
 timers. Output is `<out>/ReedWeave_JB/goldilocks.csv`, with both agreement fields
@@ -219,11 +219,13 @@ JSON report may optionally accompany your campaign outputs.
 
 ## Timing and result files
 
-Current ReedWeave_UB, ReedWeave_JB, FRI, STIR and WHIR runners use **`timing_model=core-v1`**:
+Current ReedWeave_UB and ReedWeave_JB runners use **`timing_model=core-hot-verify`**:
 
 - **Commit:** encoding/FFT, Merkle construction and native commitment work; stops before serialization.
 - **Open:** complete typed proof generation, including transcript, folds and multiproofs; stops before serialization.
-- **Verify:** full typed verification of the wire-round-trip decoded proof.
+- **Verify:** one untimed full verification of the decoded proof, followed by a single timed batch of `verify_repetitions` complete verifications of that **same proof** (default 32). The CSV records batch elapsed time divided by the count. Every call performs all checks, and any failure aborts the trial. This measures hot amortized cost, **not cold single-request latency**.
+
+FRI, STIR and WHIR retain their existing single-call verification measurements; they have not been changed to this hot-batch model.
 
 Serialization, decoding, canonical encoding checks and transport consistency checks still run, outside timers. Fixture generation, pool/process setup and CSV writes are also outside timers. RS encoding and lazy DFT work remain timed. ReedWeave_UB's `verify_encoded` API retains end-to-end checks.
 
@@ -242,9 +244,12 @@ Serialization, decoding, canonical encoding checks and transport consistency che
 
 `results/ReedWeave_UB/goldilocks.csv` and `results/ReedWeave_JB/goldilocks.csv`
 each contain a curated campaign over nine sizes with five verified trials per
-size (45 rows), 32 threads, terminal size 256, and core-v1 timing. The comparison
+size (45 rows), 32 threads, terminal size 256, and `core-hot-verify` timing.
+Both campaigns used CPUs 0-31, NUMA memory node 0, seed 20260906, and one untimed
+verification followed by 32 timed verifications of each proof. The comparison
 PNG was regenerated from both files together with the comparison protocols' CSVs,
-which were retained unchanged. Per-run warmup and verifier logs are not bundled.
+which were retained unchanged and do not share the new hot-batch verification
+method. Per-run warmup and verifier logs are not bundled.
 
 Each file records complete public parameters without a `protocol_version` column;
 the JB file inserts `agreement_numerator,agreement_denominator` after `num_queries`.
@@ -254,19 +259,59 @@ The UB header is:
 base_field,extension_degree,log_d,m,blowup,terminal_coefficients,num_queries,threads,commit_time_ms,open_time_ms,verify_time_ms,proof_size_KiB
 ```
 
-Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSVs do not record timing provenance, seeds, revisions or trial IDs; capture stderr logs when those records are needed. The comparison protocols' existing measurements were not re-run with the ReedWeave_UB/JB campaigns, so their timing compatibility is not established by the figure.
+Runners **append** to compatible CSVs. Use a fresh output directory, validate all cases, then explicitly replace the curated input when publishing a new local campaign. Do not concatenate different timing models. CSV rows do not record timing provenance, seeds, revisions or trial IDs; retain stderr logs (which record measurement settings and seed) and source provenance. The comparison protocols' existing measurements were not re-run with the ReedWeave_UB/JB campaigns, so their timing compatibility is not established by the figure.
+
+### Placement and new ReedWeave campaigns
+
+Both CLI and `[benchmark]` accept `cpu_list`, `numa_node`, and `verify_repetitions`
+(CLI: `--cpu-list`, `--numa-node`, `--verify-repetitions`). CPU and memory binding
+must be supplied together. `--no-binding` explicitly overrides config placement
+and inherits the launch environment; without a config, placement is inherited.
+The default verification batch size is 32 even without a config.
+
+Binding uses Linux CPU affinity plus `MPOL_BIND` **inside the isolated worker,
+before creating the Rayon pool or allocating polynomial data**. CPUs must be
+allowed, belong to the selected memory node, and number at least the worker
+thread count. This restricts a CPU set; it does not pin each worker to a distinct
+physical core. No global NUMA/kernel settings are modified. Unsupported systems
+or binding failures return an error, never silently fall back. Preflight checks
+topology/allowed sets without changing placement; actual syscall permissions are
+checked by the worker. Memory admission estimates are not a reservation of RAM
+on the selected node.
+
+```sh
+# Supplied configs select CPUs 0-31 / node 0 and a 32-call hot verification batch.
+target/release/reedweave-ub-bench sweep --config configs/reedweave_ub.toml --threads 32 --out results-bound
+target/release/reedweave-jb-bench sweep --config configs/reedweave_jb.toml --threads 32 --out results-bound
+```
+
+Benchmarks write **only `goldilocks.csv`** in each protocol's output directory.
+Timing semantics, verification batch size/warmup, seed, and placement are printed
+to stderr; no `goldilocks.benchmark.txt` is created or consulted. Existing sidecars
+are left untouched. The CSV schema and existing CSV validation are unchanged,
+but timing settings are no longer checked when appending: use a fresh output root
+when changing measurement settings and retain stderr logs yourself.
+The bundled ReedWeave results/figure now include the bound hot-batch campaign
+described above; do not mix it with historical single-call measurements. Changing
+`verify_repetitions` to 1 still includes a per-proof untimed warmup and does not
+restore cold-latency semantics.
 
 ## Comparison protocols and plotting
 
-`plonky3-pcs-bench` benchmarks upstream FRI/STIR over Goldilocks with cubic challenges, initial rate `1/2` and zero PoW (`log_n=20..30`). Its native multilinear WHIR profile uses hypercube evaluations (`log_n=20..28`), cubic challenges, rate `1/2`, zero PoW and a whole-protocol 100-bit algebraic budget under JohnsonBound. WHIR's native proof includes the opening value. See the executable [FRI/STIR parameters and audit](crates/plonky3-pcs-bench/src/params.rs) and [WHIR parameters and audit](crates/plonky3-pcs-bench/src/whir_params.rs).
+`plonky3-pcs-bench` now uses a fixed initial rate `1/4` profile (existing `rho=1/2` CSV rows are historical and retained). It benchmarks upstream FRI/STIR over Goldilocks with cubic challenges and zero PoW (`log_n=20..30`): FRI uses 151 queries, binary folds and 128 terminal coefficients; STIR uses four-way folds and automatically derived JohnsonBound parameters. Its native multilinear WHIR profile uses hypercube evaluations (`log_n=20..28`), cubic challenges, rate `1/4`, zero PoW, four-way folds and a whole-protocol 100-bit algebraic budget under JohnsonBound. All three profiles must pass the whole-protocol >=100-bit audit before measurement. Results append to the existing protocol CSVs with `rho=1/4`; select a single rate before plotting mixed-rate files. `--allow-memory-overcommit` explicitly bypasses the available-memory estimate (an OS OOM kill is possible); an explicit `--max-memory-mib` cap is still enforced. The 32-thread `log_n=20..28` experiment appends five measured rows per case after one discarded warmup; logs and original CSV snapshots are in `results/logs/pcs-rate-1_4-threads32/`. WHIR's native proof includes the opening value. See the executable [FRI/STIR parameters and audit](crates/plonky3-pcs-bench/src/params.rs) and [WHIR parameters and audit](crates/plonky3-pcs-bench/src/whir_params.rs).
 
 ```sh
 target/release/plonky3-pcs-bench preflight --protocols fri,stir,whir --threads 32
 python3 scripts/plot_results.py --threads 32 --validate-only
 python3 scripts/plot_results.py --threads 32
+# Quarter-rate comparison, with Brakedown's supplied native-rate reference:
+python3 scripts/plot_results.py --threads 32 --rate 1/4 \
+  --protocols fri,stir,whir,basefold,shockwave,brakedown
 ```
 
 The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave_UB, ReedWeave_JB, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. UB and JB require their complete public-parameter schemas; JB additionally validates its rational agreement. Legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
+
+`--rate` selects the initial code rate (default `1/2`) before grouping trials or checking per-size public-parameter identity; UB/JB use `1/blowup`, other protocols use `rho`. Brakedown always uses its supplied native-rate rows and is labeled accordingly. Explicitly select protocols with data at the requested rate; absent coverage is an error. Output names include the canonical rate, e.g. `results/figures/goldilocks/threads_32_rate_1_4.png`, so different-rate figures do not overwrite one another.
 
 Default sizes are `20..28`; `--log-d`/`--log-sizes` selects others. `--protocols` restricts protocols, `--results` selects an input root, `--plonky3-results` overrides only FRI/STIR/WHIR inputs, and `--out` selects the figure root. Missing explicitly selected data or incomplete trial coverage is an error. Means use five rows per point, except Shockwave and Brakedown, which each supply a single row; `--repetitions` overrides this. Zero timings use linear axes; positive-only metrics use base-2 log axes. Input semantics, security assumptions and PoW may differ across protocols: these are native-configuration comparisons, not identical-task security benchmarks.
 
