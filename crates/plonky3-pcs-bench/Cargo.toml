@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Default build: initial rate 1/4. Enable this to reproduce the audited 1/2 profile.
+rate-half = []
+
 [dependencies]
 p3-field.workspace = true
 p3-dft.workspace = true

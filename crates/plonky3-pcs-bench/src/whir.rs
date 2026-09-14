@@ -58,7 +58,8 @@ impl Setup {
         let mut separator = DomainSeparator::new(Vec::new());
         pcs.add_domain_separator::<32>(&mut separator);
         let context = format!(
-            "plonky3-pcs-bench-whir-native-v1:goldilocks:extension=3:log_n={log_n}:layout=suffix:tables=1:columns=1:prescribed_points=1:rate=1/4:fold_variables=2:JohnsonBound:target=100:query_union=half:pow=0:{}",
+            "plonky3-pcs-bench-whir-native-v1:goldilocks:extension=3:log_n={log_n}:layout=suffix:tables=1:columns=1:prescribed_points=1:rate={}:fold_variables=2:JohnsonBound:target=100:query_union=half:pow=0:{}",
+            crate::params::RATE,
             output::REVISION
         );
         Ok(Self {

@@ -47,8 +47,9 @@ pub fn open(path: &Path) -> Result<File> {
 pub fn append(file: &mut File, case: &Case, trial: &Trial) -> Result<()> {
     writeln!(
         file,
-        "{},1/4,{},{:.3},{:.3},{:.3},{:.3}",
+        "{},{},{},{:.3},{:.3},{:.3},{:.3}",
         case.log_n,
+        crate::params::RATE,
         case.threads,
         trial.commit_time * 1000.0,
         trial.prove_time * 1000.0,
@@ -63,6 +64,7 @@ pub fn append(file: &mut File, case: &Case, trial: &Trial) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::{Field, Protocol, Settings};
+    use crate::params::RATE;
 
     #[test]
     fn compact_results_use_protocol_and_base_field_paths() {
@@ -109,18 +111,19 @@ mod tests {
                 drop(file);
                 assert_eq!(
                     std::fs::read_to_string(&path).unwrap(),
-                    format!("{HEADER}20,1/4,32,1000.000,2000.000,3000.000,0.130\n")
+                    format!("{HEADER}20,{RATE},32,1000.000,2000.000,3000.000,0.130\n")
                 );
                 assert!(open(&path).is_ok());
-                // Historical half-rate rows must survive quarter-rate appends verbatim.
-                let historical = format!("{HEADER}20,1/2,32,1.000,2.000,3.000,4.000\n");
+                // Rows from the other rate must survive appends verbatim.
+                let other_rate = if RATE == "1/4" { "1/2" } else { "1/4" };
+                let historical = format!("{HEADER}20,{other_rate},32,1.000,2.000,3.000,4.000\n");
                 std::fs::write(&path, &historical).unwrap();
                 let mut file = open(&path).unwrap();
                 append(&mut file, &case, &trial).unwrap();
                 drop(file);
                 assert_eq!(
                     std::fs::read_to_string(&path).unwrap(),
-                    format!("{historical}20,1/4,32,1000.000,2000.000,3000.000,0.130\n")
+                    format!("{historical}20,{RATE},32,1000.000,2000.000,3000.000,0.130\n")
                 );
                 let old_header =
                     "log_n,rho,threads,commit_time,prove_time,verify_time,proof_size\n";

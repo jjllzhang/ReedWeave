@@ -8,6 +8,26 @@ fn cli(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn build_profile_is_reported_by_help_and_audited_preflight() {
+    let (rate, queries) = if cfg!(feature = "rate-half") {
+        ("1/2", "244")
+    } else {
+        ("1/4", "151")
+    };
+    let help = cli(&["--help"]);
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains(&format!("initial rate {rate}")));
+    let output = cli(&[
+        "preflight", "--protocols", "fri", "--log-n", "20", "--threads", "1",
+        "--allow-memory-overcommit",
+    ]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains(&format!("rate={rate}")));
+    assert!(text.contains(&format!("queries={queries} ")));
+}
+
+#[test]
 fn whir_preflight_defaults_to_goldilocks_20_through_28() {
     let output = cli(&["preflight", "--protocols", "whir"]);
     // Available memory may reject the largest sizes; all cases must still be

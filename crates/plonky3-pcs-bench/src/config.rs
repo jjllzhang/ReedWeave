@@ -52,7 +52,7 @@ impl Field {
 #[derive(Parser)]
 #[command(
     version,
-    about = "Plonky3 FRI/STIR univariate and WHIR native multilinear PCS benchmarks; fixed initial rate 1/4; audited 100-bit target, zero PoW; FRI/STIR/WHIR timing_model=core-v1"
+    about = crate::params::PROFILE_ABOUT
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -136,12 +136,13 @@ impl Case {
     }
     pub fn label(&self) -> String {
         format!(
-            "{} {} extension={} log_n={} threads={} rate=1/4{}",
+            "{} {} extension={} log_n={} threads={} rate={}{}",
             self.protocol.name(),
             self.field.name(),
             self.field.extension_degree(),
             self.log_n,
             self.threads,
+            crate::params::RATE,
             if self.protocol == Protocol::Whir {
                 " input=hypercube_evaluations opening=prescribed_multilinear"
             } else {

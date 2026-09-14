@@ -179,11 +179,13 @@ where
         }
     };
     let context = format!(
-        "plonky3-pcs-bench-v1:{}:{}:extension={}:log_n={}:rate=1/4:fri=2,128,151:stir=4,JohnsonBound,100:pow=0:{}",
+        "plonky3-pcs-bench-v1:{}:{}:extension={}:log_n={}:rate={}:fri=2,128,{}:stir=4,JohnsonBound,100:pow=0:{}",
         case.protocol.name(),
         case.field.name(),
         case.field.extension_degree(),
         case.log_n,
+        params::RATE,
+        params::FRI_QUERIES,
         output::REVISION
     );
     let fresh_challenger = || Challenger::<F>::new(context.as_bytes());

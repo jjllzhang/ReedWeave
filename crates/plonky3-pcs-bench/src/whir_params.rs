@@ -179,17 +179,25 @@ mod tests {
             assert_eq!(config.folding_schedule, vec![2; (log_n - 5) / 2]);
             assert_eq!(audit.terminal, if log_n % 2 == 0 { 64 } else { 32 });
             assert_eq!(audit.queries.len(), (log_n - 5) / 2);
-            assert_eq!(config.max_fft_size(), log_n);
+            assert_eq!(config.max_fft_size(), log_n + LOG_INV_RATE - 2);
         }
     }
 
     #[test]
     fn endpoint_query_schedules_match_the_fixed_profile() {
         // q(r)=ceil(lambda_q/(r/2-log2(21/20))), with lambda_q=104 or 105.
-        for (log_n, expected) in [
-            (20, vec![112, 73, 54, 43, 36, 31, 27]),
-            (28, vec![113, 74, 55, 44, 36, 31, 27, 24, 22, 20, 18]),
-        ] {
+        let endpoints = if LOG_INV_RATE == 1 {
+            [
+                (20, vec![243, 112, 73, 54, 43, 36, 31]),
+                (28, vec![245, 113, 74, 55, 44, 36, 31, 27, 24, 22, 20]),
+            ]
+        } else {
+            [
+                (20, vec![112, 73, 54, 43, 36, 31, 27]),
+                (28, vec![113, 74, 55, 44, 36, 31, 27, 24, 22, 20, 18]),
+            ]
+        };
+        for (log_n, expected) in endpoints {
             let config = config(log_n).unwrap();
             assert_eq!(audit_config(&config).unwrap().queries, expected);
             assert_eq!(config.commitment_ood_samples, 1);

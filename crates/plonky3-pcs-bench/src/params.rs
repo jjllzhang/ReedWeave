@@ -15,9 +15,15 @@ use crate::{
 
 /// Fixed comparison FRI geometry, independent of parameterized ReedWeave_UB.
 pub const FRI_TERMINAL_COEFFICIENTS: usize = 128;
-/// Fixed quarter-rate comparison profile (initial RS domain = 4n).
-pub const LOG_INV_RATE: usize = 2;
-pub const FRI_QUERIES: usize = 151;
+/// Build-time rate profile; both profiles retain the whole-protocol 100-bit audit.
+pub const LOG_INV_RATE: usize = if cfg!(feature = "rate-half") { 1 } else { 2 };
+pub const FRI_QUERIES: usize = if cfg!(feature = "rate-half") { 244 } else { 151 };
+pub const RATE: &str = if cfg!(feature = "rate-half") { "1/2" } else { "1/4" };
+pub const PROFILE_ABOUT: &str = if cfg!(feature = "rate-half") {
+    "Plonky3 FRI/STIR/WHIR PCS benchmarks; initial rate 1/2; audited 100-bit target, zero PoW; timing_model=core-v1"
+} else {
+    "Plonky3 FRI/STIR/WHIR PCS benchmarks; initial rate 1/4; audited 100-bit target, zero PoW; timing_model=core-v1"
+};
 
 pub type Fri<F, EF> = TwoAdicFriPcs<F, Radix2DitParallel<F>, BaseMmcs<F>, ChallengeMmcs<F, EF>>;
 pub type Stir<F, EF> =
