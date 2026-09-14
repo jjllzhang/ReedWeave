@@ -13,7 +13,8 @@ Plot arithmetic means of measured trials.
 CSV times are already in ms and proof sizes in KiB; no unit conversion is applied.
 Zero timings (including rounded zeros) are retained. Metrics containing zero use
 linear axes, consistently across thread figures; positive-only metrics use log axes.
-Write figures directly to <out>/<base_field>/threads_<count>.png;
+Use --rate (default 1/2) to select a rate before grouping trials.
+Write figures directly to <out>/<base_field>/threads_<count>_rate_<num>_<den>.png;
 the default output root is results/figures, with no comparison subdirectory.
 Overlay selected protocols at matching base fields, sizes and thread counts.
 By default, use thread counts shared by all selected protocols for each field;
@@ -23,7 +24,7 @@ By default, discover available protocol CSVs and compare supported protocols per
 field. BaseFold, Brakedown, Shockwave and WHIR are Goldilocks-only. Explicit --protocols
 compares their common supported fields unless --fields restricts them further.
 Brakedown and Shockwave supply one record per size; others default to five records.
-Brakedown retains its measured code rate rather than requiring rho=1/2.
+Brakedown retains its measured native code rate regardless of --rate.
 Input semantics, security assumptions and PoW settings can differ across protocols.
 Compact CSVs do not record seeds/revisions or trial IDs: use separate directories
 for independent campaigns and retain benchmark logs for reproducibility.
@@ -192,12 +193,16 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                  protocols=("reedweave_ub",), repetitions: int | None = None,
                  threads: tuple[int, ...] | None = None,
                  fields: tuple[str, ...] | None = None,
-                 log_sizes: tuple[int, ...] = LOG_SIZES
+                 log_sizes: tuple[int, ...] = LOG_SIZES,
+                 rate: Fraction = Fraction(1, 2)
                  ) -> dict[Key, dict[str, float]]:
     if not protocols or any(p not in PROTOCOLS for p in protocols):
         raise ValueError("choose supported protocols")
     if repetitions is not None and repetitions <= 0:
         raise ValueError("repetitions must be positive")
+    rate = Fraction(rate)
+    if not 0 < rate < 1:
+        raise ValueError("code rate must be between 0 and 1")
     fields = comparison_fields(protocols, fields)
     data: dict[Key, dict[str, float]] = {}
     for protocol in protocols:
@@ -221,6 +226,7 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                         if protocol in REEDWEAVE_PROTOCOLS:
                             validator = validate_reedweave_jb if protocol == "reedweave_jb" else validate_reedweave_ub
                             log_n, identity = validator(row)
+                            row_rate = Fraction(1, int(row["blowup"]))
                             if thread_count <= 0:
                                 raise ValueError("threads must be positive")
                         else:
@@ -228,15 +234,16 @@ def load_means(results: Path, plonky3_results: Path | None = None,
                             max_log_n = 28 if protocol == "whir" else 30
                             if not 20 <= log_n <= max_log_n or thread_count not in (1, 32):
                                 raise ValueError("unexpected size/thread configuration")
-                            if protocol == "brakedown":
-                                try:
-                                    rate = Fraction(row["rho"])
-                                except (ValueError, ZeroDivisionError) as error:
-                                    raise ValueError("invalid code rate") from error
-                                if not 0 < rate < 1:
-                                    raise ValueError("code rate must be between 0 and 1")
-                            elif row["rho"] != "1/2":
-                                raise ValueError("incompatible rate")
+                            try:
+                                row_rate = Fraction(row["rho"])
+                            except (ValueError, ZeroDivisionError) as error:
+                                raise ValueError("invalid code rate") from error
+                            if not 0 < row_rate < 1:
+                                raise ValueError("code rate must be between 0 and 1")
+                        # Filter before campaign-identity checks and repetition grouping.
+                        # Brakedown is an explicitly native-rate reference curve.
+                        if protocol != "brakedown" and row_rate != rate:
+                            continue
                         # Check campaign identity before thread filtering: a selected
                         # thread must not hide incompatible pp measured on another.
                         if protocol in REEDWEAVE_PROTOCOLS and log_n in log_sizes:
@@ -288,9 +295,9 @@ def load_means(results: Path, plonky3_results: Path | None = None,
 
 
 def load_comparison(results, plonky3_results=None, protocols=None, repetitions=None,
-                    threads=None, fields=None, log_sizes=LOG_SIZES):
+                    threads=None, fields=None, log_sizes=LOG_SIZES, rate=Fraction(1, 2)):
     if protocols is not None:
-        return load_means(results, plonky3_results, protocols, repetitions, threads, fields, log_sizes)
+        return load_means(results, plonky3_results, protocols, repetitions, threads, fields, log_sizes, rate)
     selected = discover_protocols(results, plonky3_results)
     data = {}
     for field in fields or tuple(FIELDS):
@@ -302,7 +309,7 @@ def load_comparison(results, plonky3_results=None, protocols=None, repetitions=N
             continue
         print(f"{field}: available protocols={','.join(available)}")
         data.update(load_means(results, plonky3_results, available, repetitions,
-                                 threads, (field,), log_sizes))
+                                 threads, (field,), log_sizes, rate))
     if not data:
         raise ValueError("no supported field CSVs found")
     return data
@@ -344,10 +351,11 @@ def configure_y_axis(ax, title: str, unit: str, limits):
 
 
 def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
-                 protocols=("reedweave_ub",), log_sizes=LOG_SIZES) -> Path:
+                 protocols=("reedweave_ub",), log_sizes=LOG_SIZES, rate=Fraction(1, 2)) -> Path:
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 2, figsize=(13.2, 9.0))
+    rate = Fraction(rate)
     fig.subplots_adjust(left=0.095, right=0.98, top=0.92, bottom=0.09, hspace=0.30, wspace=0.30)
     for ax, (metric, title, unit) in zip(axes.flat, METRICS):
         for protocol in protocols:
@@ -366,7 +374,7 @@ def plot_profile(data, profile: str, threads: int, out: Path, dpi: int,
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
                bbox_transform=fig.transFigure, ncol=len(protocols), frameon=False,
                fontsize=10, handlelength=3, columnspacing=2)
-    path = out / profile / f"threads_{threads}.png"
+    path = out / profile / f"threads_{threads}_rate_{rate.numerator}_{rate.denominator}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=dpi, facecolor="white", metadata={"Software": "PCS plot_results.py"})
     plt.close(fig)
@@ -380,6 +388,16 @@ def parse_protocols(value: str) -> tuple[str, ...] | None:
     if any(p not in PROTOCOLS for p in protocols) or len(set(protocols)) != len(protocols):
         raise argparse.ArgumentTypeError("choose all or distinct protocols from " + ",".join(PROTOCOLS))
     return protocols
+
+
+def parse_rate(value: str) -> Fraction:
+    try:
+        rate = Fraction(value)
+    except (ValueError, ZeroDivisionError) as error:
+        raise argparse.ArgumentTypeError("choose a rational code rate, e.g. 1/4") from error
+    if not 0 < rate < 1:
+        raise argparse.ArgumentTypeError("code rate must be between 0 and 1")
+    return rate
 
 
 def parse_fields(value: str) -> tuple[str, ...]:
@@ -428,10 +446,12 @@ def main():
                         help="Base fields (default: available fields for all; common supported fields for explicit protocols)")
     parser.add_argument("--threads", type=parse_threads,
                         help="Thread counts, e.g. 32 or 1,32 (default: shared counts per field)")
+    parser.add_argument("--rate", type=parse_rate, default=Fraction(1, 2),
+                        help="Select initial code rate (default: 1/2); Brakedown keeps its native rate")
     parser.add_argument("--repetitions", type=int,
                         help="Override required records per configuration for every protocol (defaults: Brakedown/Shockwave 1, others 5)")
     parser.add_argument("--out", type=Path,
-                        help="Figure root; writes <out>/<base_field>/threads_<count>.png directly. "
+                        help="Figure root; writes <out>/<base_field>/threads_<count>_rate_<num>_<den>.png. "
                              "Default: <results>/figures")
     parser.add_argument("--log-sizes", "--log-d", type=parse_log_sizes, default=LOG_SIZES,
                         help="Size exponent list or inclusive range, e.g. 1,2,3 or 1..3 (default: 20..28); ReedWeave UB/JB log_d, others native log_n")
@@ -443,7 +463,7 @@ def main():
         parser.error("--dpi and --repetitions must be positive")
     try:
         data = load_comparison(args.results, args.plonky3_results, args.protocols,
-                               args.repetitions, args.threads, args.fields, args.log_sizes)
+                               args.repetitions, args.threads, args.fields, args.log_sizes, args.rate)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     configurations = sorted({(profile, threads) for profile, threads, _, _ in data})
@@ -471,7 +491,7 @@ def main():
     for profile, threads in configurations:
         plotted = tuple(p for p in protocols if (profile, threads, args.log_sizes[0], p) in data)
         print(plot_profile(data, profile, threads, args.out or args.results / "figures",
-                           args.dpi, plotted, args.log_sizes))
+                           args.dpi, plotted, args.log_sizes, args.rate))
     print(f"Generated {len(configurations)} figures; raw CSV files were not modified.")
 
 
