@@ -1,8 +1,18 @@
 # ReedWeave_UB (unique decoding), not ReedWeave_JB.
-# Goldilocks, blowup=2, 100-bit IOP soundness target.
+# Goldilocks, initial rate=1/4 (blowup=4), 100-bit IOP soundness target; no PoW.
 # CSV/PNG measurements use the corrected protocol; use a fresh output root for reruns.
-# Minimize expected protocol-only multiproof bytes with terminal_coefficients <= 256.
-# Search e in {1,2,3,5} and all valid power-of-two m and terminal sizes.
+# Minimize exact expected protocol-only antipodal multiproof bytes, including commitment.
+# Exhaust all legal power-of-two m, terminal sizes 2..256, and e in {1,2,3,5}.
+# Each candidate uses its minimum certified Q; ranking uses exact rational bytes.
+# This is a model optimum, NOT an actual serialized-size or runtime optimum.
+# Reproduce both variants: python3 scripts/tune_reedweave.py
+# Search grid, counts, exact sizes and certificates: configs/reedweave_rate_1_4_search.json
+# Exact bound: (5/8)^Q + [4*(2^log_d-k_t)+m-1+t]/q^e <= 2^-100,
+# where k_t=terminal_coefficients and t=log2(2^log_d/(m*k_t)).
+# Every case passes at Q and fails at Q-1 for this bound (exact integers).
+# At log_d=26, e=3/Q=148 beats the feasible e=2/Q=175 in expected bytes.
+# Recheck [pp] (override --log-d, --m and --extension-degree for each [[cases]] entry):
+# python3 scripts/reedweave_ub_queries.py --config configs/reedweave_ub.toml --security-bits 100 --json
 # This does not certify Fiat-Shamir or hash security; wire sizes may differ.
 # Load explicitly with --config configs/reedweave_ub.toml; no implicit config.
 # Run uses [pp] (log_d=20); sweep/preflight use the nine complete [[cases]].
@@ -11,17 +21,23 @@
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 20
-m = 32
-blowup = 2
+m = 64
+blowup = 4
 terminal_coefficients = 256
-num_queries = 241
+num_queries = 148
 
 # Runtime settings do not enter mathematical pp. CLI overrides before validation.
 [benchmark]
 threads = [1, 32]
 # One full discarded verified warmup, then this many measured trials.
 repetitions = 5
-# Core-only timing: <output_dir>/ReedWeave_UB/goldilocks.csv
+# core-hot-verify: one untimed verification, then average 32 complete calls.
+verify_repetitions = 32
+# This host: 32 physical CPUs in NUMA node 0. Override both on other machines,
+# or use --no-binding for inherited placement (a separate benchmark campaign).
+cpu_list = "0-31"
+numa_node = 0
+# Core timing (Verify is a hot batch average): <output_dir>/ReedWeave_UB/goldilocks.csv
 # Plotter reads results/ReedWeave_UB/goldilocks.csv; replace it only after validating a fresh run.
 output_dir = "results"
 seed = 20260906
@@ -31,84 +47,85 @@ seed = 20260906
 # max_memory_mib = 65536
 # time_limit_seconds = 3600
 
-# Complete tuned cases: Q is the minimum certified by scripts/reedweave_ub_queries.py.
+# Complete quarter-rate cases: Q is the minimum certified by scripts/reedweave_ub_queries.py.
+# Conservative total bound is >=100.016269370 bits across these nine cases.
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 20
-m = 32
-blowup = 2
+m = 64
+blowup = 4
 terminal_coefficients = 256
-num_queries = 241
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 21
-m = 32
-blowup = 2
+m = 64
+blowup = 4
 terminal_coefficients = 256
-num_queries = 241
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 22
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 242
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 23
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 242
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 24
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 242
+num_queries = 149
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
 log_d = 25
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 242
+num_queries = 149
 
 [[cases]]
 base_field = "goldilocks"
-extension_degree = 2
+extension_degree = 3
 log_d = 26
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 244
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 27
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 241
+num_queries = 148
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 28
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-num_queries = 241
+num_queries = 148

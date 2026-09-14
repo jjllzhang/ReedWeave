@@ -1,34 +1,45 @@
 # ReedWeave_JB: one commitment plus one Eval, 100-bit interactive IOP budget.
 # Merkle/Fiat-Shamir, hash security, repeated openings and runtime resources NOT certified.
 # No measurements were run to generate these cases; run Rust preflight before benchmarking.
-# Finite, modest search (NOT a global optimum): log_d=20..28; m={32,64}; blowup={2};
-# terminal_coefficients={256} (<=256); fixed agreement={177/250}=0.708; e={2,3}.
-# The command below rechecks the selected shortlist, not the earlier broader parameter sweep.
-# Objective: min_expected_bytes, independently per log_d, exact antipodal-pair expectation.
-# Sizes include one R/zeta/c commitment; no context/framing, z/y or query indices.
-# Detailed candidate errors/certificates are generated on demand, not stored in the repository.
-# Recompute the selection and print its JSON report to stdout (no benchmark or file writes):
-# PYTHONDONTWRITEBYTECODE=1 python3 scripts/reedweave_jb_queries.py --search \
-#   --search-log-d 20,21,22,23,24,25,26,27,28 --search-m 32,64 --search-blowups 2 \
-#   --search-terminal-coefficients 256 --search-agreements 177/250 \
-#   --search-degrees 2,3 --objective min_expected_bytes --security-bits 100 --json
+# Goldilocks, initial rate=1/4 (blowup=4); no PoW.
+# Minimize exact expected protocol-only antipodal multiproof bytes, including commitment.
+# Exhaust all legal power-of-two m, terminal sizes 2..256, e in {1,2,3,5},
+# and 15 agreements declared in scripts/tune_reedweave.py (0.500001 through 0.75).
+# Optimal ONLY over this finite agreement grid and geometry, not all rational agreements
+# or actual serialized sizes. Every candidate uses its minimum certified Q.
+# Ties use (e,m,terminal,agreement,Q); selected agreements need not be unique optima.
+# All sizes select m=64, terminal=256, e=3, Q=101.
+# Agreement=5001/10000 for log_d=20..25, 501/1000 for 26..28, both >sqrt(1/4).
+# Binding + MCA + evaluation constraints + agreement^Q <= 2^-100,
+# certified with exact rational intervals; Q-1 fails the selected whole-protocol bound.
+# Conservative total bound is >=100.072275537 bits across log_d=20..28.
+# Reproduce both variants: python3 scripts/tune_reedweave.py
+# Search grid, counts, exact sizes and certificates: configs/reedweave_rate_1_4_search.json
+# Recheck [pp] (override geometry and agreement for each [[cases]] entry):
+# python3 scripts/reedweave_jb_queries.py --config configs/reedweave_jb.toml --security-bits 100 --json
 # Explicit load only; [pp] is run's first case, [[cases]] are the full sweep.
 # Do not override individual pp axes when using these selected sweep cases.
 [pp]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 20
-m = 32
-blowup = 2
+m = 64
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 # Execution settings do not enter pp or the IOP certificate.
 [benchmark]
 threads = [1, 32]
 repetitions = 5
+# core-hot-verify: one untimed verification, then average 32 complete calls.
+verify_repetitions = 32
+# This host: 32 physical CPUs in NUMA node 0. Override both on other machines,
+# or use --no-binding for inherited placement (a separate benchmark campaign).
+cpu_list = "0-31"
+numa_node = 0
 # Always override this with a fresh output root for a real campaign.
 output_dir = "results"
 seed = 20260906
@@ -37,97 +48,97 @@ seed = 20260906
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 20
-m = 32
-blowup = 2
+m = 64
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 21
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 22
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 23
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 24
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 25
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 5001
+agreement_denominator = 10000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 26
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 27
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
 
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 28
 m = 64
-blowup = 2
+blowup = 4
 terminal_coefficients = 256
-agreement_numerator = 177
-agreement_denominator = 250
-num_queries = 201
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
