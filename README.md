@@ -298,7 +298,7 @@ restore cold-latency semantics.
 
 ## Comparison protocols and plotting
 
-`plonky3-pcs-bench` now uses a fixed initial rate `1/4` profile (existing `rho=1/2` CSV rows are historical and retained). It benchmarks upstream FRI/STIR over Goldilocks with cubic challenges and zero PoW (`log_n=20..30`): FRI uses 151 queries, binary folds and 128 terminal coefficients; STIR uses four-way folds and automatically derived JohnsonBound parameters. Its native multilinear WHIR profile uses hypercube evaluations (`log_n=20..28`), cubic challenges, rate `1/4`, zero PoW, four-way folds and a whole-protocol 100-bit algebraic budget under JohnsonBound. All three profiles must pass the whole-protocol >=100-bit audit before measurement. Results append to the existing protocol CSVs with `rho=1/4`; select a single rate before plotting mixed-rate files. `--allow-memory-overcommit` explicitly bypasses the available-memory estimate (an OS OOM kill is possible); an explicit `--max-memory-mib` cap is still enforced. The 32-thread `log_n=20..28` experiment appends five measured rows per case after one discarded warmup; logs and original CSV snapshots are in `results/logs/pcs-rate-1_4-threads32/`. WHIR's native proof includes the opening value. See the executable [FRI/STIR parameters and audit](crates/plonky3-pcs-bench/src/params.rs) and [WHIR parameters and audit](crates/plonky3-pcs-bench/src/whir_params.rs).
+`plonky3-pcs-bench` defaults to the initial rate `1/4` profile. Building the same current source with `--no-default-features --features rate-half` selects the audited `1/2` profile (FRI: 244 rather than 151 queries); no historical checkout is needed. The remaining description in this paragraph refers to the default quarter-rate build. It benchmarks upstream FRI/STIR over Goldilocks with cubic challenges and zero PoW (`log_n=20..30`): FRI uses 151 queries, binary folds and 128 terminal coefficients; STIR uses four-way folds and automatically derived JohnsonBound parameters. Its native multilinear WHIR profile uses hypercube evaluations (`log_n=20..28`), cubic challenges, rate `1/4`, zero PoW, four-way folds and a whole-protocol 100-bit algebraic budget under JohnsonBound. All three profiles must pass the whole-protocol >=100-bit audit before measurement. Results append to the existing protocol CSVs with `rho=1/4`; select a single rate before plotting mixed-rate files. `--allow-memory-overcommit` explicitly bypasses the available-memory estimate (an OS OOM kill is possible); an explicit `--max-memory-mib` cap is still enforced. The 32-thread `log_n=20..28` experiment appends five measured rows per case after one discarded warmup; logs and original CSV snapshots are in `results/logs/pcs-rate-1_4-threads32/`. WHIR's native proof includes the opening value. See the executable [FRI/STIR parameters and audit](crates/plonky3-pcs-bench/src/params.rs) and [WHIR parameters and audit](crates/plonky3-pcs-bench/src/whir_params.rs).
 
 ```sh
 target/release/plonky3-pcs-bench preflight --protocols fri,stir,whir --threads 32
@@ -308,6 +308,41 @@ python3 scripts/plot_results.py --threads 32
 python3 scripts/plot_results.py --threads 32 --rate 1/4 \
   --protocols fri,stir,whir,basefold,shockwave,brakedown
 ```
+
+### Rate-specific single-thread PCS campaigns
+
+```sh
+# Each entry point builds only its selected rate from the current working tree.
+./scripts/run_pcs_single_thread_rate_1_2.py
+./scripts/run_pcs_single_thread_rate_1_4.py
+# Build and preflight only: no proofs, benchmark measurements or CSV appends.
+./scripts/run_pcs_single_thread_rate_1_2.py --prepare-only
+./scripts/run_pcs_single_thread_rate_1_4.py --prepare-only
+```
+
+Each script runs FRI, STIR and WHIR at its selected rate sequentially with no
+inter-case cooldowns. Common validation/build/append logic lives in
+`scripts/pcs_single_thread_common.py`; the former combined entry point has been
+replaced by these two scripts. Each group uses `log_n=20..28`, one
+local Rayon worker, one discarded warmup, five measured repetitions, seed
+`20260906`, a whole-protocol 100-bit algebraic target and zero PoW. Placement is
+inherited. The selected binary is built before measurement and copied to a stable
+path under `results/logs/pcs-single-rate-1_2-*/bin/` or
+`results/logs/pcs-single-rate-1_4-*/bin/`; logs, original CSV snapshots and a
+manifest are saved alongside them. The working tree's sources are not replaced.
+
+Each verified trial immediately appends to `results/{FRI,STIR,WHIR}/goldilocks.csv`
+with the correct `rho`; three complete new groups produce 135 rows per script
+(45 per protocol). `--out DIR`
+selects another result root. On reruns, a group with exactly five rows at every
+selected size is skipped; partial/duplicate groups are refused before building
+so they cannot be silently mixed. Inspect partial results manually or choose a
+fresh output root. A failed group retains completed rows and later groups are
+still attempted, with a nonzero final exit status. Quarter-rate runs explicitly
+use `--allow-memory-overcommit`; this bypasses conservative admission, not actual
+RAM limits, and an OS OOM kill remains possible. Both scripts share a local lock
+to prevent concurrent instances writing the same output root; do not run other
+benchmark writers against that root concurrently.
 
 The plotter reads `<results>/<protocol>/goldilocks.csv` and discovers ReedWeave_UB, ReedWeave_JB, FRI, STIR, WHIR, BaseFold, Shockwave and Brakedown. UB and JB require their complete public-parameter schemas; JB additionally validates its rational agreement. Legacy headers are rejected. Protocol version is not inferred from CSV contents. Parameters may vary **between sizes**, but must agree within each size across trials and thread counts. No two parameter choices at the same size are averaged together.
 
