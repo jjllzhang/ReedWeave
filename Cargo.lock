@@ -833,6 +833,7 @@ dependencies = [
  "p3-matrix",
  "p3-symmetric",
  "postcard",
+ "rayon",
  "reedweave-primitives",
  "reedweave-runtime",
  "reedweave-ub-core",

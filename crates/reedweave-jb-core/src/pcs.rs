@@ -2,10 +2,12 @@
 //! Only pi_1 through pi_(t-1) have scalar trees; the terminal oracle is virtual.
 use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::{Dimensions, dense::RowMajorMatrix};
+use rayon::prelude::*;
 use reedweave_primitives::{
     dft::{DftError, NaturalOrderDft, padded_coefficient_blocks},
     hash::Digest,
     mmcs::{CanonicalMmcs, LeafKind, MatrixOpening, MatrixProverData, MmcsError, MultiProof},
+    polynomial::{combine_rows, evaluate_interleaved},
     transcript::{FieldProfile, TranscriptError},
 };
 use reedweave_runtime::ExecutionContext;
@@ -206,7 +208,7 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
             context_id: self.params.transcript_context().identifier()?,
             root,
             zeta,
-            deep_values: deep_values::<P>(&coefficients, self.params.m(), zeta),
+            deep_values: deep_values::<P>(&coefficients, self.params.m(), zeta, execution),
         };
         Ok((
             commitment.clone(),
@@ -267,7 +269,7 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
         {
             return Err(PcsError::OpeningDistance);
         }
-        if deep_values::<P>(coefficients, self.params.m(), commitment.zeta)
+        if deep_values::<P>(coefficients, self.params.m(), commitment.zeta, execution)
             != commitment.deep_values
         {
             return Err(PcsError::DeepOpening);
@@ -285,37 +287,13 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
             return Err(PcsError::StateMismatch);
         }
         let z0 = z.exp_u64(self.params.m() as u64);
-        let blocks: Vec<_> = (0..self.params.m())
-            .map(|i| {
-                horner(
-                    state
-                        .coefficients
-                        .iter()
-                        .skip(i)
-                        .step_by(self.params.m())
-                        .copied(),
-                    z0,
-                )
-            })
-            .collect();
+        let blocks = evaluate_interleaved(&state.coefficients, self.params.m(), z0, execution);
         let y = reconstruct(&blocks, z);
         let mut transcript = self.start(&state.commitment, z, y, &blocks)?;
         let weights = power_weights(transcript.sample_challenge(), self.params.m());
-        let coefficients: Vec<_> = state
-            .coefficients
-            .chunks_exact(self.params.m())
-            .map(|row| combine::<P>(row, &weights))
-            .collect();
-        let mut coefficients = coefficients;
-        let mut initial_word = (self.params.rounds() > 1).then(|| {
-            state
-                .initial
-                .matrix()
-                .values
-                .chunks_exact(self.params.m())
-                .map(|row| combine::<P>(row, &weights))
-                .collect::<Vec<_>>()
-        });
+        let mut coefficients = combine_rows(&state.coefficients, &weights, execution);
+        let mut initial_word = (self.params.rounds() > 1)
+            .then(|| combine_rows(&state.initial.matrix().values, &weights, execution));
         let mut layers: Vec<MatrixProverData<P::Challenge>> =
             Vec::with_capacity(self.params.rounds() - 1);
         let mut rounds = Vec::with_capacity(self.params.rounds());
@@ -703,24 +681,33 @@ pub(crate) fn validate_proof_shape<P: FieldProfile>(
     Ok(())
 }
 
+// Avoid pool scheduling for small inputs; this is a performance heuristic only.
+const MIN_PARALLEL_DEEP_COEFFICIENTS: usize = 1 << 14;
+
 /// Evaluate borrowed base component coefficients directly in K; no lifted d-vector.
+/// Independent Horner chains share the caller's local pool. Indexed collection
+/// preserves component order regardless of scheduling, including for short inputs.
 fn deep_values<P: FieldProfile>(
     coefficients: &[P::Base],
     m: usize,
     zeta: P::Challenge,
+    execution: &ExecutionContext,
 ) -> Vec<P::Challenge> {
-    (0..m)
-        .map(|i| {
-            horner(
-                coefficients
-                    .iter()
-                    .skip(i)
-                    .step_by(m)
-                    .map(|&value| P::Challenge::from(value)),
-                zeta,
-            )
-        })
-        .collect()
+    let evaluate = |i| {
+        horner(
+            coefficients
+                .iter()
+                .skip(i)
+                .step_by(m)
+                .map(|&value| P::Challenge::from(value)),
+            zeta,
+        )
+    };
+    if m > 1 && coefficients.len() >= MIN_PARALLEL_DEEP_COEFFICIENTS && execution.threads() > 1 {
+        execution.install(|| (0..m).into_par_iter().map(evaluate).collect())
+    } else {
+        (0..m).map(evaluate).collect()
+    }
 }
 
 fn combine_extension<K: Field>(values: &[K], weights: &[K]) -> K {

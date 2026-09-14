@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 reedweave-primitives.workspace = true
 reedweave-runtime.workspace = true
+rayon.workspace = true
 p3-field.workspace = true
 p3-challenger.workspace = true
 p3-symmetric.workspace = true

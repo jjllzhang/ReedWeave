@@ -6,6 +6,7 @@ use reedweave_primitives::{
     dft::{DftError, NaturalOrderDft, padded_coefficient_blocks},
     hash::Digest,
     mmcs::{CanonicalMmcs, LeafKind, MatrixOpening, MatrixProverData, MmcsError, MultiProof},
+    polynomial::{combine_rows, evaluate_interleaved},
     transcript::{FieldProfile, Transcript, TranscriptError},
 };
 use reedweave_runtime::ExecutionContext;
@@ -221,37 +222,13 @@ impl<P: FieldProfile> ReedWeaveUb<P> {
             return Err(PcsError::StateMismatch);
         }
         let z0 = z.exp_u64(self.params.m() as u64);
-        let blocks: Vec<_> = (0..self.params.m())
-            .map(|i| {
-                horner(
-                    state
-                        .coefficients
-                        .iter()
-                        .skip(i)
-                        .step_by(self.params.m())
-                        .copied(),
-                    z0,
-                )
-            })
-            .collect();
+        let blocks = evaluate_interleaved(&state.coefficients, self.params.m(), z0, execution);
         let y = reconstruct(&blocks, z);
         let mut transcript = self.start(&state.commitment, z, y, &blocks)?;
         let weights = power_weights(transcript.sample_challenge(), self.params.m());
-        let coefficients: Vec<_> = state
-            .coefficients
-            .chunks_exact(self.params.m())
-            .map(|row| combine::<P>(row, &weights))
-            .collect();
-        let mut coefficients = coefficients;
-        let mut initial_word = (self.params.rounds() > 1).then(|| {
-            state
-                .initial
-                .matrix()
-                .values
-                .chunks_exact(self.params.m())
-                .map(|row| combine::<P>(row, &weights))
-                .collect::<Vec<_>>()
-        });
+        let mut coefficients = combine_rows(&state.coefficients, &weights, execution);
+        let mut initial_word = (self.params.rounds() > 1)
+            .then(|| combine_rows(&state.initial.matrix().values, &weights, execution));
         let mut layers: Vec<MatrixProverData<P::Challenge>> =
             Vec::with_capacity(self.params.rounds() - 1);
         let mut rounds = Vec::with_capacity(self.params.rounds());

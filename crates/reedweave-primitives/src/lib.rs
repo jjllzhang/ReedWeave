@@ -4,5 +4,6 @@ pub mod dft;
 pub mod fields;
 pub mod hash;
 pub mod mmcs;
+pub mod polynomial;
 pub mod profile;
 pub mod transcript;
