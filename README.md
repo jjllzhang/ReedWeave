@@ -1,5 +1,15 @@
 # ReedWeave
 
+## Anonymous research artifact
+
+This repository contains the research implementation and evaluation tools for ReedWeave polynomial commitment schemes.
+
+The artifact includes two constructions, benchmark configurations, query-count calculators, measured results, and plotting scripts. Protocol and dependency names are retained to make the implementation reproducible.
+This is experimental research software, not an audited or production-ready cryptographic library. Functional tests and parameter calculations do not constitute a security certification.
+
+
+## Implemented constructions
+
 **ReedWeave_UB** implements the unique-decoding base construction.
 **ReedWeave_JB** implements the DEEP-enhanced construction strictly below the
 Johnson radius. They have independent commitments, codecs and
@@ -10,7 +20,6 @@ transcript domains; shared primitives and runtime keep the ReedWeave family name
 | UB | `ReedWeaveUb`, `UbParams`, `UbProof` | `reedweave-ub-core`, `reedweave-ub-bench` | `reedweave_ub` | `ReedWeave_UB` |
 | JB | `ReedWeaveJb`, `JbParams`, `JbProof` | `reedweave-jb-core`, `reedweave-jb-bench` | `reedweave_jb` | `ReedWeave_JB` |
 
-The old unqualified implementation names are no longer supported.
 
 Rust coefficient-input PCSs over Goldilocks, with challenge extension degrees **1, 2, 3, 5**, Blake3 hashing, shared Merkle multiproofs, bounded codecs, and benchmark tools. Protocol behavior, parameters, and security limitations are described below.
 
@@ -74,7 +83,7 @@ target/release/reedweave-ub-bench sweep --config configs/reedweave_ub.toml --thr
 target/release/reedweave-ub-bench run --config configs/reedweave_ub.toml --threads 32 --out results-one
 ```
 
-No config is loaded implicitly. `sweep` and `preflight` use the complete `[[cases]]`; `run` uses `[pp]` (the `log_d=20` case). CLI public-parameter flags override every selected case, so do not override them when reproducing the tuned campaign. The config retains thread choices `[1,32]`; `--threads 32` selects only the measurements currently stored in the repository. Use `--help` for lists/ranges and runtime options.
+No config is loaded implicitly. `sweep` and `preflight` use the complete `[[cases]]`; `run` uses `[pp]` (the `log_d=20` case). CLI public-parameter flags override every selected case, so do not override them when reproducing the tuned campaign. The config retains thread choices `[1,32]`; `--threads 32` selects only the 32-thread cases. Bundled results include both single-thread and 32-thread measurements. Use `--help` for lists/ranges and runtime options.
 
 Each case runs in a separate child process and local Rayon pool; supported benchmark thread counts are 1 and 32. The supplied ReedWeave configs bind CPUs `0-31` and memory to NUMA node `0` on the experiment host; adapt both settings on other machines. Fixture generation uses deterministic `SplitMix64-v1`, seed `20260906`, with separate coefficient/point streams; Fiat–Shamir challenges do not use this generator. Each measured repetition commits afresh and opens at the next point. Warmup resets the point stream before measurements.
 
@@ -212,8 +221,8 @@ generation and c evaluation; Open includes both evaluation chains; typed Verify
 includes commitment challenge replay. Canonical wire round-trip stays outside
 timers. Output is `<out>/ReedWeave_JB/goldilocks.csv`, with both agreement fields
 in addition to the complete UB-style public parameters. A curated JB campaign
-is bundled as `results/ReedWeave_JB/goldilocks.csv` (nine sizes, five trials each,
-32 threads); the plotter validates it like the UB file. Use fresh output roots for
+is bundled as `results/ReedWeave_JB/goldilocks.csv` (nine sizes, five trials per
+size for each rate/thread combination); the plotter validates it like the UB file. Use fresh output roots for
 new campaigns and retain the chosen parameters and execution logs. A generated
 JSON report may optionally accompany your campaign outputs.
 
@@ -240,16 +249,15 @@ Serialization, decoding, canonical encoding checks and transport consistency che
 | Curated ReedWeave_UB plotting input | `results/ReedWeave_UB/goldilocks.csv` |
 | Curated ReedWeave_JB plotting input | `results/ReedWeave_JB/goldilocks.csv` |
 | Other protocol CSVs | `<out>/<protocol>/goldilocks.csv` |
-| Comparison figure | `results/figures/goldilocks/threads_32.png` |
+| Comparison figures | `results/figures/goldilocks/threads_<count>_rate_<num>_<den>.png` |
 
 `results/ReedWeave_UB/goldilocks.csv` and `results/ReedWeave_JB/goldilocks.csv`
-each contain a curated campaign over nine sizes with five verified trials per
-size (45 rows), 32 threads, terminal size 256, and `core-hot-verify` timing.
-Both campaigns used CPUs 0-31, NUMA memory node 0, seed 20260906, and one untimed
-verification followed by 32 timed verifications of each proof. The comparison
-PNG was regenerated from both files together with the comparison protocols' CSVs,
-which were retained unchanged and do not share the new hot-batch verification
-method. Per-run warmup and verifier logs are not bundled.
+each contain 180 rows: nine sizes (`log_d=20..28`), five verified trials per
+size, rates `1/2` and `1/4`, and thread counts 1 and 32. Terminal size is 256.
+The supplied configs specify CPUs 0-31, NUMA memory
+node 0, seed 20260906, and 32 timed verifications after an untimed verification.
+Comparison figures use the protocol CSVs at the selected rate and thread count;
+they do not establish identical timing methodology across protocols.
 
 Each file records complete public parameters without a `protocol_version` column;
 the JB file inserts `agreement_numerator,agreement_denominator` after `num_queries`.
@@ -308,6 +316,22 @@ python3 scripts/plot_results.py --threads 32
 python3 scripts/plot_results.py --threads 32 --rate 1/4 \
   --protocols fri,stir,whir,basefold,shockwave,brakedown
 ```
+
+### Reproduce the bundled single-thread figures
+
+From the repository root, using the current curated CSV files:
+
+```sh
+python3 scripts/plot_results.py --threads 1 --rate 1/2 --validate-only
+python3 scripts/plot_results.py --threads 1 --rate 1/4 --validate-only
+python3 scripts/plot_results.py --threads 1 --rate 1/2
+python3 scripts/plot_results.py --threads 1 --rate 1/4
+```
+
+These commands compare all eight available protocols over sizes `2^20..2^28`
+and write `results/figures/goldilocks/threads_1_rate_1_2.png` and
+`results/figures/goldilocks/threads_1_rate_1_4.png`. They do not run benchmarks or
+modify the input CSVs. Brakedown retains its native rate in both comparisons.
 
 ### Rate-specific single-thread PCS campaigns
 
