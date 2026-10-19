@@ -22,7 +22,7 @@ impl Protocol {
         }
     }
     pub fn max_log_n(self) -> usize {
-        if self == Self::Whir { 28 } else { 30 }
+        32
     }
     pub fn fields(self) -> &'static [Field] {
         &[Field::Goldilocks]
@@ -170,7 +170,8 @@ pub struct Matrix {
     /// Default: Goldilocks for every protocol.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub fields: Vec<Field>,
-    /// Inclusive input-size exponents. Default: WHIR 20..28, FRI/STIR 20..30.
+    /// Inclusive input-size exponents up to 32, subject to actual FFT domain limits.
+    /// Default stays WHIR 20..28, FRI/STIR 20..30.
     #[arg(long)]
     pub log_n: Option<String>,
     #[arg(long, value_delimiter = ',', default_value = "1,32")]
@@ -185,7 +186,7 @@ impl Matrix {
                 let (lo, hi) = range.split_once("..").unwrap_or((range, range));
                 (lo.parse::<usize>()?, hi.parse::<usize>()?)
             } else {
-                (20, protocol.max_log_n())
+                (20, if protocol == Protocol::Whir { 28 } else { 30 })
             };
             if !(20..=protocol.max_log_n()).contains(&lo)
                 || !(lo..=protocol.max_log_n()).contains(&hi)

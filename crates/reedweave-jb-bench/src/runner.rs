@@ -158,6 +158,7 @@ mod tests {
                 output: directory.path().into(),
                 seed: 42,
                 repetitions: 1,
+                allow_memory_overcommit: false,
                 max_memory_mib: Some(512),
                 time_limit_seconds: None,
             };

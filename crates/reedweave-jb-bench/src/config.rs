@@ -75,6 +75,10 @@ pub struct Common {
     /// Ignore CPU/NUMA binding in the config; inherit the launch environment.
     #[arg(long, conflicts_with_all = ["cpu_list", "numa_node"])]
     pub no_binding: bool,
+    /// Bypass available-RAM estimates for a bounded actual allocation attempt.
+    /// Use an external OS/process memory limit; explicit estimate caps still apply.
+    #[arg(long)]
+    pub allow_memory_overcommit: bool,
     /// Estimate-based admission cap, not an OS RSS limit.
     #[arg(long)]
     pub max_memory_mib: Option<u64>,
@@ -134,6 +138,7 @@ pub struct Benchmark {
     pub numa_node: Option<usize>,
     pub output_dir: PathBuf,
     pub seed: u64,
+    pub allow_memory_overcommit: bool,
     pub max_memory_mib: Option<u64>,
     pub time_limit_seconds: Option<u64>,
 }
@@ -149,6 +154,7 @@ impl Default for Benchmark {
             numa_node: None,
             output_dir: "results".into(),
             seed: 20260906,
+            allow_memory_overcommit: false,
             max_memory_mib: None,
             time_limit_seconds: None,
         }
@@ -189,6 +195,7 @@ pub struct Settings {
     pub output: PathBuf,
     pub seed: u64,
     pub repetitions: usize,
+    pub allow_memory_overcommit: bool,
     pub max_memory_mib: Option<u64>,
     pub time_limit_seconds: Option<u64>,
 }
@@ -221,6 +228,7 @@ pub fn settings(config: Option<&Config>, common: &Common) -> Result<Settings> {
         output: common.out.clone().unwrap_or_else(|| b.output_dir.clone()),
         seed: common.seed.unwrap_or(b.seed),
         repetitions: common.repetitions.unwrap_or(b.repetitions),
+        allow_memory_overcommit: common.allow_memory_overcommit || b.allow_memory_overcommit,
         max_memory_mib: common.max_memory_mib.or(b.max_memory_mib),
         time_limit_seconds: common.time_limit_seconds.or(b.time_limit_seconds),
     };

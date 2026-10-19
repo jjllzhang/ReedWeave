@@ -18,7 +18,13 @@ fn build_profile_is_reported_by_help_and_audited_preflight() {
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains(&format!("initial rate {rate}")));
     let output = cli(&[
-        "preflight", "--protocols", "fri", "--log-n", "20", "--threads", "1",
+        "preflight",
+        "--protocols",
+        "fri",
+        "--log-n",
+        "20",
+        "--threads",
+        "1",
         "--allow-memory-overcommit",
     ]);
     assert!(output.status.success());
@@ -48,8 +54,8 @@ fn whir_preflight_defaults_to_goldilocks_20_through_28() {
 fn whir_rejects_unsupported_fields_sizes_and_threads_before_output() {
     for (field, size, threads, error) in [
         ("f128", "20", "1", "invalid value"),
-        ("goldilocks", "19", "1", "20..=28"),
-        ("goldilocks", "29", "1", "20..=28"),
+        ("goldilocks", "19", "1", "20..=32"),
+        ("goldilocks", "33", "1", "20..=32"),
         ("goldilocks", "20", "2", "1 or 32"),
     ] {
         let output = cli(&[
@@ -129,17 +135,96 @@ fn mixed_protocol_defaults_only_include_supported_cases() {
 #[test]
 fn overcommit_preflight_keeps_security_audits_and_explicit_caps() {
     let args = [
-        "preflight", "--protocols", "fri,stir,whir", "--log-n", "28",
-        "--threads", "32", "--allow-memory-overcommit",
+        "preflight",
+        "--protocols",
+        "fri,stir,whir",
+        "--log-n",
+        "28",
+        "--threads",
+        "32",
+        "--allow-memory-overcommit",
     ];
     let output = cli(&args);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stderr).matches("algebraic_bound_bits=").count(), 3);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .matches("algebraic_bound_bits=")
+            .count(),
+        3
+    );
     let mut capped = args.to_vec();
     capped.extend(["--max-memory-mib", "1"]);
     let output = cli(&capped);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("explicit memory cap"));
+}
+
+#[test]
+fn extended_preflight_retains_native_domain_limits() {
+    let max_fft_input = if cfg!(feature = "rate-half") {
+        "31"
+    } else {
+        "30"
+    };
+    let beyond_fft = if cfg!(feature = "rate-half") {
+        "32"
+    } else {
+        "31"
+    };
+    for protocol in ["fri", "stir"] {
+        let valid = cli(&[
+            "preflight",
+            "--protocols",
+            protocol,
+            "--log-n",
+            max_fft_input,
+            "--threads",
+            "32",
+            "--allow-memory-overcommit",
+        ]);
+        assert!(
+            valid.status.success(),
+            "{}",
+            String::from_utf8_lossy(&valid.stderr)
+        );
+        let invalid = cli(&[
+            "preflight",
+            "--protocols",
+            protocol,
+            "--log-n",
+            beyond_fft,
+            "--threads",
+            "32",
+            "--allow-memory-overcommit",
+        ]);
+        assert!(!invalid.status.success());
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains("two-adicity"));
+    }
+    let whir = cli(&[
+        "preflight",
+        "--protocols",
+        "whir",
+        "--log-n",
+        "29..32",
+        "--threads",
+        "32",
+        "--allow-memory-overcommit",
+    ]);
+    assert!(
+        whir.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whir.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&whir.stderr)
+            .matches("algebraic_bound_bits=")
+            .count(),
+        4
+    );
 }
 
 #[test]

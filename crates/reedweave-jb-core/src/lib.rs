@@ -2,6 +2,8 @@
 //! Interactive IOP error bounds do not certify this Fiat–Shamir/Merkle compilation.
 //! Geometry validation is not a security estimate.
 pub mod codec;
+#[cfg(all(feature = "open-profiling", target_os = "linux"))]
+mod open_profile;
 mod pcs;
 pub mod transcript;
 use crate::transcript::TranscriptContext;

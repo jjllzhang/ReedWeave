@@ -154,6 +154,7 @@ fn dynamic_estimates_and_overflow_without_large_allocations() {
         output: "unused".into(),
         seed: 0,
         repetitions: 1,
+        allow_memory_overcommit: false,
         max_memory_mib: Some(1),
         time_limit_seconds: None,
     };
@@ -162,6 +163,16 @@ fn dynamic_estimates_and_overflow_without_large_allocations() {
         cpus: Some(3),
     };
     assert!(resources::admit(&estimate, &settings, &available).is_err());
+    let mut actual_attempt = settings.clone();
+    actual_attempt.allow_memory_overcommit = true;
+    // Explicit estimate caps remain enforced even when host estimates are bypassed.
+    assert!(resources::admit(&estimate, &actual_attempt, &available).is_err());
+    actual_attempt.max_memory_mib = None;
+    let no_ram = Available {
+        memory: Some(0),
+        cpus: Some(1),
+    };
+    assert!(resources::admit(&estimate, &actual_attempt, &no_ram).is_ok());
     let overflowing = Settings {
         max_memory_mib: Some(u64::MAX),
         ..settings

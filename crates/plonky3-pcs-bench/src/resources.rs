@@ -105,10 +105,8 @@ pub fn admit(case: &Case, settings: &Settings) -> Result<()> {
         .map(|v| v.checked_mul(MIB).ok_or("memory cap overflow"))
         .transpose()?;
     if settings.allow_memory_overcommit {
-        if let Some(limit) = configured {
-            if estimated_peak(case) > limit {
-                return Err("unmeasured: estimated peak exceeds explicit memory cap".into());
-            }
+        if configured.is_some_and(|limit| estimated_peak(case) > limit) {
+            return Err("unmeasured: estimated peak exceeds explicit memory cap".into());
         }
         return Ok(());
     }

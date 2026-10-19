@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+open-profiling = ["reedweave-jb-core/open-profiling"]
+
 [dependencies]
 reedweave-jb-core = { path = "../reedweave-jb-core" }
 reedweave-primitives.workspace = true

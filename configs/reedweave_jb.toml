@@ -2,6 +2,8 @@
 # Merkle/Fiat-Shamir, hash security, repeated openings and runtime resources NOT certified.
 # No measurements were run to generate these cases; run Rust preflight before benchmarking.
 # Goldilocks, initial rate=1/4 (blowup=4); no PoW.
+# The 20..28 cases below are the historical finite-grid selections.
+# Cases 29..34 preserve the size-28 geometry with certified Q, not a new tuning task.
 # Minimize exact expected protocol-only antipodal multiproof bytes, including commitment.
 # Exhaust all legal power-of-two m, terminal sizes 2..256, e in {1,2,3,5},
 # and 15 agreements declared in scripts/tune_reedweave.py (0.500001 through 0.75).
@@ -9,7 +11,7 @@
 # or actual serialized sizes. Every candidate uses its minimum certified Q.
 # Ties use (e,m,terminal,agreement,Q); selected agreements need not be unique optima.
 # All sizes select m=64, terminal=256, e=3, Q=101.
-# Agreement=5001/10000 for log_d=20..25, 501/1000 for 26..28, both >sqrt(1/4).
+# Agreement=5001/10000 for log_d=20..25, 501/1000 for 26..34, both >sqrt(1/4).
 # Binding + MCA + evaluation constraints + agreement^Q <= 2^-100,
 # certified with exact rational intervals; Q-1 fails the selected whole-protocol bound.
 # Conservative total bound is >=100.072275537 bits across log_d=20..28.
@@ -136,6 +138,72 @@ num_queries = 101
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 28
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 29
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 30
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 31
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 32
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 33
+m = 64
+blowup = 4
+terminal_coefficients = 256
+agreement_numerator = 501
+agreement_denominator = 1000
+num_queries = 101
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 34
 m = 64
 blowup = 4
 terminal_coefficients = 256

@@ -828,6 +828,7 @@ dependencies = [
 name = "reedweave-jb-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "p3-challenger",
  "p3-field",
  "p3-matrix",

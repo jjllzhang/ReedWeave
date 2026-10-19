@@ -18,6 +18,23 @@ use crate::{
     transcript::{Transcript, commit_challenge},
 };
 
+// Entire diagnostic path is compiled out of default builds.
+macro_rules! profile_phase {
+    ($profiler:ident, $stage:literal, $round:expr, $operation:expr) => {{
+        #[cfg(all(feature = "open-profiling", target_os = "linux"))]
+        {
+            match $profiler.as_mut() {
+                Some(profiler) => profiler.measure($stage, $round, || $operation),
+                None => $operation,
+            }
+        }
+        #[cfg(not(all(feature = "open-profiling", target_os = "linux")))]
+        {
+            $operation
+        }
+    }};
+}
+
 #[cfg(test)]
 #[path = "deep_tests.rs"]
 mod deep_tests;
@@ -286,14 +303,34 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
         if state.params != self.params {
             return Err(PcsError::StateMismatch);
         }
+        #[cfg(all(feature = "open-profiling", target_os = "linux"))]
+        let mut profiler = crate::open_profile::OpenProfiler::new();
         let z0 = z.exp_u64(self.params.m() as u64);
-        let blocks = evaluate_interleaved(&state.coefficients, self.params.m(), z0, execution);
+        let blocks = profile_phase!(
+            profiler,
+            "component_evaluation",
+            None,
+            evaluate_interleaved(&state.coefficients, self.params.m(), z0, execution)
+        );
         let y = reconstruct(&blocks, z);
         let mut transcript = self.start(&state.commitment, z, y, &blocks)?;
         let weights = power_weights(transcript.sample_challenge(), self.params.m());
-        let mut coefficients = combine_rows(&state.coefficients, &weights, execution);
-        let mut initial_word = (self.params.rounds() > 1)
-            .then(|| combine_rows(&state.initial.matrix().values, &weights, execution));
+        let mut coefficients = profile_phase!(
+            profiler,
+            "combine_coefficients",
+            None,
+            combine_rows(&state.coefficients, &weights, execution)
+        );
+        let mut initial_word = profile_phase!(
+            profiler,
+            "combine_oracle",
+            None,
+            (self.params.rounds() > 1).then(|| combine_rows(
+                &state.initial.matrix().values,
+                &weights,
+                execution
+            ))
+        );
         let mut layers: Vec<MatrixProverData<P::Challenge>> =
             Vec::with_capacity(self.params.rounds() - 1);
         let mut rounds = Vec::with_capacity(self.params.rounds());
@@ -305,18 +342,23 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
         let mut omega = P::Base::two_adic_generator(self.params.log_domain_size());
         for j in 0..self.params.rounds() {
             let square = point.square();
-            let even_value = horner(
-                coefficients.iter().step_by(2).copied(),
-                P::Challenge::from(square),
-            );
-            let odd_value = horner(
-                coefficients.iter().skip(1).step_by(2).copied(),
-                P::Challenge::from(square),
-            );
             let deep_square = deep_point.square();
-            let deep_even_value = horner(coefficients.iter().step_by(2).copied(), deep_square);
-            let deep_odd_value =
-                horner(coefficients.iter().skip(1).step_by(2).copied(), deep_square);
+            let (even_value, odd_value, deep_even_value, deep_odd_value) =
+                profile_phase!(profiler, "round_evaluation", Some(j), {
+                    let even_value = horner(
+                        coefficients.iter().step_by(2).copied(),
+                        P::Challenge::from(square),
+                    );
+                    let odd_value = horner(
+                        coefficients.iter().skip(1).step_by(2).copied(),
+                        P::Challenge::from(square),
+                    );
+                    let deep_even_value =
+                        horner(coefficients.iter().step_by(2).copied(), deep_square);
+                    let deep_odd_value =
+                        horner(coefficients.iter().skip(1).step_by(2).copied(), deep_square);
+                    (even_value, odd_value, deep_even_value, deep_odd_value)
+                });
             transcript.observe_round(j, even_value, odd_value, deep_even_value, deep_odd_value)?;
             check_round(
                 j,
@@ -332,7 +374,12 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
                 },
             )?;
             let gamma = transcript.sample_challenge();
-            coefficients = fold_coefficients(&coefficients, gamma);
+            coefficients = profile_phase!(
+                profiler,
+                "fold_coefficients",
+                Some(j),
+                fold_coefficients(&coefficients, gamma)
+            );
             if j + 1 < self.params.rounds() {
                 let word = if j == 0 {
                     initial_word
@@ -341,10 +388,19 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
                 } else {
                     &layers[j - 1].matrix().values
                 };
-                let folded = fold_word::<P>(word, gamma, omega);
-                let (root, layer) = self
-                    .scalar_mmcs
-                    .commit(RowMajorMatrix::new_col(folded), execution)?;
+                let folded = profile_phase!(
+                    profiler,
+                    "fold_word",
+                    Some(j),
+                    fold_word::<P>(word, gamma, omega)
+                );
+                let (root, layer) = profile_phase!(
+                    profiler,
+                    "tree_build",
+                    Some(j),
+                    self.scalar_mmcs
+                        .commit(RowMajorMatrix::new_col(folded), execution)
+                )?;
                 transcript.observe_round_root(j, &root)?;
                 oracle_roots.push(root);
                 layers.push(layer);
@@ -363,39 +419,47 @@ impl<P: FieldProfile> ReedWeaveJb<P> {
             omega = omega.square();
         }
         let terminal_coefficients = coefficients;
-        check_terminal(
-            &terminal_coefficients,
-            P::Challenge::from(point),
-            claim,
-            deep_point,
-            deep_claim,
+        profile_phase!(
+            profiler,
+            "terminal_evaluation",
+            None,
+            check_terminal(
+                &terminal_coefficients,
+                P::Challenge::from(point),
+                claim,
+                deep_point,
+                deep_claim,
+            )
         )?;
         transcript.observe_terminal(&terminal_coefficients)?;
-        let starts = transcript.sample_queries();
-        let sets = query_sets(&self.params, &starts);
-        let initial_opening = self
-            .initial_mmcs
-            .open_multi_batch(&sets[0], &state.initial)?;
-        let mut scalar_openings = Vec::with_capacity(self.params.rounds() - 1);
-        for j in 1..self.params.rounds() {
-            let opening = self
-                .scalar_mmcs
-                .open_multi_batch(&sets[j], &layers[j - 1])?;
-            let values = opening
-                .rows
-                .into_iter()
-                .map(|row| {
-                    if row.len() != 1 {
-                        return Err(PcsError::Shape("scalar MMCS row"));
-                    }
-                    Ok(row[0])
-                })
-                .collect::<Result<_, _>>()?;
-            scalar_openings.push(ScalarOpening {
-                values,
-                proof: opening.proof,
-            });
-        }
+        let (initial_opening, scalar_openings) = profile_phase!(profiler, "query", None, {
+            let starts = transcript.sample_queries();
+            let sets = query_sets(&self.params, &starts);
+            let initial_opening = self
+                .initial_mmcs
+                .open_multi_batch(&sets[0], &state.initial)?;
+            let mut scalar_openings = Vec::with_capacity(self.params.rounds() - 1);
+            for j in 1..self.params.rounds() {
+                let opening = self
+                    .scalar_mmcs
+                    .open_multi_batch(&sets[j], &layers[j - 1])?;
+                let values = opening
+                    .rows
+                    .into_iter()
+                    .map(|row| {
+                        if row.len() != 1 {
+                            return Err(PcsError::Shape("scalar MMCS row"));
+                        }
+                        Ok(row[0])
+                    })
+                    .collect::<Result<_, _>>()?;
+                scalar_openings.push(ScalarOpening {
+                    values,
+                    proof: opening.proof,
+                });
+            }
+            Ok::<_, PcsError>((initial_opening, scalar_openings))
+        })?;
         Ok(Opening {
             y,
             proof: JbProof {

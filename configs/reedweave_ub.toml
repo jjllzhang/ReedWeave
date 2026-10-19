@@ -1,6 +1,8 @@
 # ReedWeave_UB (unique decoding), not ReedWeave_JB.
 # Goldilocks, initial rate=1/4 (blowup=4), 100-bit IOP soundness target; no PoW.
 # CSV/PNG measurements use the corrected protocol; use a fresh output root for reruns.
+# The 20..28 cases below are the historical finite-grid selections.
+# Cases 29..34 preserve the size-28 geometry with certified Q, not a new tuning task.
 # Minimize exact expected protocol-only antipodal multiproof bytes, including commitment.
 # Exhaust all legal power-of-two m, terminal sizes 2..256, and e in {1,2,3,5}.
 # Each candidate uses its minimum certified Q; ranking uses exact rational bytes.
@@ -15,7 +17,7 @@
 # python3 scripts/reedweave_ub_queries.py --config configs/reedweave_ub.toml --security-bits 100 --json
 # This does not certify Fiat-Shamir or hash security; wire sizes may differ.
 # Load explicitly with --config configs/reedweave_ub.toml; no implicit config.
-# Run uses [pp] (log_d=20); sweep/preflight use the nine complete [[cases]].
+# Run uses [pp] (log_d=20); sweep/preflight use all fifteen cases, log_d=20..34.
 # Do not override pp axes when running this tuned sweep.
 [pp]
 base_field = "goldilocks"
@@ -48,7 +50,7 @@ seed = 20260906
 # time_limit_seconds = 3600
 
 # Complete quarter-rate cases: Q is the minimum certified by scripts/reedweave_ub_queries.py.
-# Conservative total bound is >=100.016269370 bits across these nine cases.
+# Historical 20..28 total bound is >=100.016269370 bits; all cases target 100 bits.
 [[cases]]
 base_field = "goldilocks"
 extension_degree = 2
@@ -125,6 +127,60 @@ num_queries = 148
 base_field = "goldilocks"
 extension_degree = 3
 log_d = 28
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 29
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 30
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 31
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 32
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 33
+m = 64
+blowup = 4
+terminal_coefficients = 256
+num_queries = 148
+
+[[cases]]
+base_field = "goldilocks"
+extension_degree = 3
+log_d = 34
 m = 64
 blowup = 4
 terminal_coefficients = 256

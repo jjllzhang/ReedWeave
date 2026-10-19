@@ -172,6 +172,12 @@ pub fn admit(estimate: &Estimate, settings: &Settings, available: &Available) ->
         .max_memory_mib
         .map(|m| m.checked_mul(MIB).ok_or("memory limit overflow"))
         .transpose()?;
+    if settings.allow_memory_overcommit {
+        if configured.is_some_and(|limit| estimate.peak > limit) {
+            return Err("unmeasured: estimated peak exceeds explicit memory cap".into());
+        }
+        return Ok(());
+    }
     let usable = minimum(configured, available.memory.map(|m| m / 5 * 4));
     if let Some(limit) = usable {
         if estimate.peak > limit {
